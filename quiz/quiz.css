@@ -1,0 +1,152 @@
+/* Shared tokens and the phone (player) layout. The host page adds host.css. */
+:root {
+  --navy: #1B3158;
+  --bg: #0f1a30;
+  --bg-2: #15233f;
+  --line: rgba(255, 255, 255, .12);
+  --ink: #ffffff;
+  --muted: rgba(255, 255, 255, .68);
+  --dark-ink: #0f1a30;
+  --grad-navy: linear-gradient(100deg, #1B3158 0%, #3E2B63 50%, #942753 100%);
+  --grad-peach: linear-gradient(100deg, #F3966F 0%, #F3CA94 100%);
+  --tile-a: #24427a; --tile-a-ink: #ffffff;
+  --tile-b: #F3966F; --tile-b-ink: #0f1a30;
+  --tile-c: #942753; --tile-c-ink: #ffffff;
+  --tile-d: #F3CA94; --tile-d-ink: #0f1a30;
+  --good: #3ccf91;
+  --bad: #ff6b6b;
+  --font-body: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  background-image: radial-gradient(120% 70% at 50% -10%, rgba(62, 43, 99, .55) 0%, rgba(27, 49, 88, .35) 40%, rgba(15, 26, 48, 0) 75%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-body);
+  line-height: 1.4;
+  min-height: 100vh;
+}
+button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+
+/* Brand row */
+.brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand .logo { height: 26px; width: auto; display: block; }
+.logo-text { font-weight: 700; font-size: 24px; letter-spacing: -.02em; }
+.pill {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted);
+  white-space: nowrap;
+}
+.grad-text { background: var(--grad-peach); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.mono { font-family: var(--font-mono); }
+
+/* Answer tiles, shared with the host */
+.tile { --t: var(--tile-a); --ti: var(--tile-a-ink); background: var(--t); color: var(--ti); }
+.tile.t0 { --t: var(--tile-a); --ti: var(--tile-a-ink); }
+.tile.t1 { --t: var(--tile-b); --ti: var(--tile-b-ink); }
+.tile.t2 { --t: var(--tile-c); --ti: var(--tile-c-ink); }
+.tile.t3 { --t: var(--tile-d); --ti: var(--tile-d-ink); }
+.badge {
+  font-family: var(--font-mono); font-weight: 500;
+  display: inline-grid; place-items: center; flex: none;
+  border-radius: 8px; background: rgba(0, 0, 0, .22); color: inherit;
+}
+.tile.t1 .badge, .tile.t3 .badge { background: rgba(15, 26, 48, .14); }
+
+/* ---------- Player page ---------- */
+.phone {
+  max-width: 520px; margin: 0 auto;
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) 28px max(16px, env(safe-area-inset-left, 0px));
+  min-height: 100vh; display: flex; flex-direction: column; gap: 18px;
+}
+.phone header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 40px; }
+.phone .who { flex-basis: 100%; font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.phone .who:empty { display: none; }
+.screen { display: flex; flex-direction: column; gap: 16px; flex: 1; }
+.phone h1 { font-size: 28px; line-height: 1.12; margin: 0; letter-spacing: -.02em; }
+.phone h2 { font-size: 22px; line-height: 1.2; margin: 0; }
+.lede { color: var(--muted); margin: 0; font-size: 16px; }
+.label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+
+.field input {
+  width: 100%; min-height: 56px; font: inherit; font-size: 18px; color: var(--ink);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 0 16px;
+}
+.field input:focus { outline: 2px solid #F3966F; outline-offset: 1px; }
+.count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: right; margin-top: 6px; }
+
+.groups { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.group-btn {
+  min-height: 64px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg-2);
+  font-size: 18px; font-weight: 500; cursor: pointer;
+}
+.group-btn[aria-pressed="true"] { background: var(--grad-navy); border-color: #F3966F; box-shadow: 0 0 0 2px #F3966F inset; }
+
+.primary {
+  min-height: 64px; width: 100%; border: 0; border-radius: 16px; cursor: pointer;
+  background: var(--grad-peach); color: var(--dark-ink); font-size: 20px; font-weight: 700;
+}
+.primary:disabled { opacity: .5; cursor: default; }
+.error { color: #ffb4a8; margin: 0; min-height: 1.4em; }
+
+.card {
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 18px; padding: 18px;
+}
+.big-wait { text-align: left; padding: 22px 18px; }
+.big-wait .name { background: var(--grad-peach); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* Question on phone */
+.qhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.qmeta { font-family: var(--font-mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.timer { font-family: var(--font-mono); font-size: 28px; font-weight: 500; min-width: 2.4ch; text-align: right; }
+.timer.low { color: #F3966F; }
+.bar { height: 6px; border-radius: 6px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 100%; background: var(--grad-peach); transform-origin: left; transition: transform .25s linear; }
+.qtext { font-size: 21px; line-height: 1.28; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+.answers { display: flex; flex-direction: column; gap: 10px; }
+.answer {
+  display: flex; align-items: center; gap: 14px; text-align: left; width: 100%;
+  min-height: 68px; padding: 10px 14px; border: 0; border-radius: 16px; cursor: pointer;
+  font-size: 18px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere;
+}
+.answer .badge { width: 40px; height: 40px; font-size: 18px; }
+.answer:active { transform: scale(.985); }
+.answer:disabled { cursor: default; }
+.answers.locked .answer { opacity: .3; }
+.answers.locked .answer.picked { opacity: 1; box-shadow: 0 0 0 3px #fff inset; }
+.answers.static .answer { cursor: default; min-height: 56px; }
+
+.status-line { font-size: 18px; font-weight: 500; text-align: center; margin: 0; }
+
+/* Result */
+.result { text-align: center; padding: 26px 18px; }
+.result .verdict { font-size: 40px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+.result.good .verdict { color: var(--good); }
+.result.bad .verdict { color: #ff8f8f; }
+.result .points { font-family: var(--font-mono); font-size: 22px; margin: 8px 0 0; }
+.result .total { color: var(--muted); margin: 6px 0 0; font-family: var(--font-mono); }
+.reveal-answer { display: flex; gap: 12px; align-items: center; border-radius: 14px; padding: 12px 14px; font-weight: 500; }
+.reveal-answer .badge { width: 36px; height: 36px; }
+.explain { color: var(--muted); margin: 0; }
+
+.final-num { font-family: var(--font-mono); font-size: 44px; font-weight: 500; margin: 4px 0 0; }
+.final-row { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.final-row b { font-family: var(--font-mono); font-weight: 500; }
+
+/* Reconnecting banner */
+.banner {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 10;
+  background: #F3CA94; color: var(--dark-ink); text-align: center; font-weight: 500;
+  padding: 10px 16px calc(10px) ; font-size: 15px;
+  padding-top: max(10px, env(safe-area-inset-top, 0px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar i { transition: none; }
+}
