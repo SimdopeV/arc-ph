@@ -24,6 +24,7 @@
     armed: {},
     autoRevealed: {},
     lastHtml: '',
+    podiumShown: false,
     qr: null
   };
 
@@ -501,6 +502,75 @@
       }).join('') + '</div></section>';
   }
 
+  // ---------------------------------------------------------------- confetti
+  // Plays once each time the winners' podium comes up: two cannons from the
+  // bottom corners, then a short shower from the top. It ignores the laptop's
+  // reduced motion setting on purpose: it is for the room, not the laptop owner.
+  var confetti = (function () {
+    var COLORS = ['#F3966F', '#942753', '#F3CA94', '#ffffff', '#c9a6ff'];
+    var canvas = null, ctx = null, parts = [], raf = 0, last = 0, showerUntil = 0, W = 0, Ht = 0;
+
+    function size() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth; Ht = window.innerHeight;
+      canvas.width = W * dpr; canvas.height = Ht * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function add(x, y, angle, spread, speed) {
+      var a = angle + (Math.random() - 0.5) * spread;
+      var v = speed * (0.55 + Math.random() * 0.6);
+      var s = Ht * (0.008 + Math.random() * 0.008);
+      parts.push({
+        x: x, y: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        w: s, h: s * (0.4 + Math.random() * 0.5),
+        rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.3,
+        tilt: Math.random() * 6.28, vt: 0.05 + Math.random() * 0.12,
+        c: COLORS[Math.floor(Math.random() * COLORS.length)]
+      });
+    }
+    function frame(now) {
+      var dt = Math.min((now - last) / 16.7, 3), g = Ht * 0.0006, drag = Math.pow(0.985, dt);
+      last = now;
+      if (now < showerUntil) for (var k = 0; k < 3; k++) add(Math.random() * W, -20, Math.PI / 2, 1, Ht * 0.004);
+      ctx.clearRect(0, 0, W, Ht);
+      parts = parts.filter(function (p) {
+        p.vx *= drag; p.vy = p.vy * drag + g * dt;
+        p.tilt += p.vt * dt; p.rot += p.vr * dt;
+        p.x += (p.vx + Math.sin(p.tilt) * 0.6) * dt; p.y += p.vy * dt;
+        if (p.y > Ht + 30) return false;
+        ctx.save();
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.cos(p.tilt));
+        ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+        return true;
+      });
+      if (parts.length || now < showerUntil) raf = requestAnimationFrame(frame); else stop();
+    }
+    function start() {
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.className = 'confetti'; canvas.setAttribute('aria-hidden', 'true');
+        ctx = canvas.getContext('2d');
+        window.addEventListener('resize', function () { if (raf) size(); });
+      }
+      stop();
+      document.body.appendChild(canvas);
+      size();
+      for (var i = 0; i < 140; i++) {
+        add(0, Ht, -Math.PI / 3, 0.6, Ht * 0.034);
+        add(W, Ht, -2 * Math.PI / 3, 0.6, Ht * 0.034);
+      }
+      last = performance.now(); showerUntil = last + 3500;
+      raf = requestAnimationFrame(frame);
+    }
+    function stop() {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0; parts = []; showerUntil = 0;
+      if (canvas && canvas.parentNode) { ctx.clearRect(0, 0, W, Ht); canvas.parentNode.removeChild(canvas); }
+    }
+    return { start: start, stop: stop };
+  })();
+
   function render() {
     var g = game();
     var html;
@@ -510,6 +580,10 @@
     else if (g.status === 'leaderboard') html = viewLeaderboard(g);
     else html = viewFinal();
     if (html !== H.lastHtml) { stage.innerHTML = html; H.lastHtml = html; }
+    var podium = !!g && g.status === 'final' && H.finalStep === 0;
+    if (podium && !H.podiumShown) confetti.start();
+    else if (!podium && H.podiumShown) confetti.stop();
+    H.podiumShown = podium;
     renderControls();
     renderChips();
     tick();

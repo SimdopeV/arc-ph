@@ -136,6 +136,7 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
 .pod.p3 .block { height: 17vh; background: #942753; }
 .rest { display: flex; justify-content: center; gap: 2vw; }
 .rest .lrow { min-width: 22vw; }
+.confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
 
 /* Controls: quiet on the projector, full strength on hover or focus */
 .controls {
