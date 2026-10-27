@@ -74,7 +74,7 @@ create table public.players (
   id         uuid primary key default gen_random_uuid(),
   game_id    uuid not null references public.games (id) on delete cascade,
   name       text not null check (char_length(name) between 1 and 20),
-  group_name text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Mike')),
+  group_name text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing')),
   joined_at  timestamptz not null default now()
 );
 create index players_game_idx on public.players (game_id);
@@ -97,7 +97,7 @@ create index answers_game_q_idx on public.answers (game_id, question_idx);
 create table public.card_awards (
   game_id      uuid not null references public.games (id) on delete cascade,
   question_idx int  not null,
-  group_name   text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Mike')),
+  group_name   text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing')),
   primary key (game_id, question_idx, group_name)
 );
 
@@ -138,7 +138,7 @@ end $$;
 
 create or replace function public._groups()
 returns text[] language sql immutable as $$
-  select array['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Mike']
+  select array['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing']
 $$;
 
 create or replace function public._name_is_blocked(p_name text)

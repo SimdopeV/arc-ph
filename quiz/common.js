@@ -4,7 +4,7 @@
   var Q = (window.Quiz = {});
 
   Q.cfg = cfg;
-  Q.GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Mike'];
+  Q.GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing'];
   Q.LETTERS = ['A', 'B', 'C', 'D'];
   Q.configured = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY &&
     cfg.SUPABASE_URL.indexOf('YOUR-') < 0 && cfg.SUPABASE_ANON_KEY.indexOf('YOUR-') < 0);
