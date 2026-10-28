@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#010A20">
+<title>Arc PH Scorekeeper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Space+Grotesk:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap">
+<link rel="stylesheet" href="scoreboard.css">
+</head>
+<body class="keeper" data-page="keeper">
+
+<div id="app" hidden>
+  <header class="k-top">
+    <img class="logo" src="../quiz/Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
+    <div class="status">
+      <span class="now">Now: <span id="miniSeg">Setup</span></span>
+      <span class="mini" id="miniTimer" data-phase="idle">--:--</span>
+    </div>
+    <span class="chip" id="chip"><i></i><span>Connecting</span></span>
+    <button type="button" class="lock" id="lockBtn">Lock</button>
+  </header>
+
+  <main class="k-main">
+    <section class="sec" aria-labelledby="hPoints">
+      <h2 id="hPoints">Points</h2>
+      <div class="gchips" id="gameChips"></div>
+      <div class="panel" id="panel"></div>
+    </section>
+
+    <section class="sec" aria-labelledby="hRecent">
+      <div class="sec-head">
+        <h2 id="hRecent">Last 10 awards</h2>
+        <button type="button" class="small" id="undoLatest">Undo latest</button>
+      </div>
+      <ol class="recent" id="recent"></ol>
+    </section>
+
+    <section class="sec" aria-labelledby="hTimer">
+      <h2 id="hTimer">Timer</h2>
+      <div class="k-timer"><span class="big" id="kTimer" data-phase="idle">00:00</span></div>
+      <div class="k-timer-state" id="kTimerState">No timer</div>
+      <div id="presets"></div>
+      <form class="custom" id="customForm" autocomplete="off">
+        <input id="customMin" type="text" inputmode="decimal" placeholder="Custom minutes" aria-label="Custom minutes">
+        <button type="submit" class="btn">Set</button>
+      </form>
+      <label class="field"><span>Label on the TV</span>
+        <input id="timerLabelIn" type="text" maxlength="40" autocomplete="off">
+      </label>
+      <div class="tbtns">
+        <button type="button" class="go" data-timer="start">Start</button>
+        <button type="button" data-timer="pause">Pause</button>
+        <button type="button" data-timer="resume">Resume</button>
+        <button type="button" data-timer="reset">Reset</button>
+        <button type="button" data-timer="add_minute">+1 min</button>
+      </div>
+    </section>
+
+    <section class="sec" aria-labelledby="hSeg">
+      <h2 id="hSeg">Now showing</h2>
+      <div class="segments" id="segments"></div>
+    </section>
+
+    <section class="sec danger" aria-labelledby="hReset">
+      <h2 id="hReset">Reset</h2>
+      <button type="button" class="btn" id="resetAll">Reset all scores</button>
+      <p>Deletes every award and sets all six totals to 0. The timer and segment stay. Tap twice within 3 seconds.</p>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" hidden>
+  <span id="toastText"></span>
+  <button type="button" id="toastUndo" hidden>Undo</button>
+</div>
+
+<div class="gate" id="gate">
+  <form class="gate-card" id="gateForm" autocomplete="off">
+    <img class="logo" src="../quiz/Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
+    <h1>Scorekeeper</h1>
+    <p class="sub">Prompt to Deploy with Arc Studio</p>
+    <label for="pin">Keeper PIN</label>
+    <input id="pin" type="password" autocomplete="off" required>
+    <p class="error" id="gateError" role="alert"></p>
+    <button type="submit" id="gateBtn">Unlock</button>
+  </form>
+</div>
+
+<script src="../quiz/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.min.js"></script>
+<script src="scoreboard.js"></script>
+</body>
+</html>

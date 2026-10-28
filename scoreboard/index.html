@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#010A20">
+<title>Arc PH Scoreboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Space+Grotesk:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap">
+<link rel="stylesheet" href="scoreboard.css">
+</head>
+<body class="tv" data-page="tv">
+
+<div class="tv-bg"></div>
+
+<div class="tv-stage" id="stage">
+  <header class="tv-top">
+    <img class="tv-logo" src="../quiz/Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
+    <div class="tv-tag">PROMPT · DEBUG · DEPLOY</div>
+    <div class="tv-now"><span class="k">Now</span><span id="segment">Setup</span></div>
+  </header>
+
+  <main class="tv-main">
+    <section class="board" aria-label="Group scores">
+      <div class="k-label">Group scores</div>
+      <ol class="rows" id="rows"></ol>
+    </section>
+
+    <aside class="timer-card" id="timerCard" data-phase="idle" aria-label="Timer">
+      <div class="k-label">Timer</div>
+      <div class="timer-label" id="timerLabel">Timer</div>
+      <div class="timer-digits dim" id="timerDigits">00:00</div>
+      <div class="timer-bar"><i id="timerBar"></i></div>
+      <div class="timer-state" id="timerState">No timer</div>
+      <div class="latest">
+        <div class="k-label">Latest</div>
+        <div class="latest-text" id="latest">No points yet</div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="tv-foot">
+    <span class="event">Prompt to Deploy with Arc Studio · Pyale WorkHub, Port Harcourt</span>
+    <span class="sound" id="soundHint">Press F for full screen and sound</span>
+    <span class="chip" id="chip"><i></i><span>Connecting</span></span>
+  </footer>
+</div>
+
+<script src="../quiz/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.min.js"></script>
+<script src="scoreboard.js"></script>
+</body>
+</html>
