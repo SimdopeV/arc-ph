@@ -279,6 +279,7 @@
       '<div class="qhead"><span class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions +
       (g.category ? ' · ' + Q.esc(g.category) : '') + '</span><span class="timer" id="timer"></span></div>' +
       '<div class="bar"><i id="bar"></i></div>' +
+      '<p class="stake" id="stake"></p>' +
       '<p class="qtext">' + Q.esc(g.question_text) + '</p>' +
       '<div class="answers ' + cls + '">' + buttons + '</div>' + status;
   }
@@ -370,6 +371,21 @@
     var shown = Math.max(0, Math.ceil(left));
     t.textContent = g.paused_at ? 'Paused' : String(shown);
     t.className = 'timer' + (shown <= 5 ? ' low' : '');
+    // Points still up for grabs: 500 + 500 x time left, the same formula the server scores with.
+    var stake = document.getElementById('stake');
+    if (stake) {
+      var mine = st.choiceIdx === g.current_index && (st.lock === 'locked' || st.lock === 'sending');
+      var sHtml = '', sCls = 'stake';
+      if (g.card_mode) sHtml = '';
+      else if (mine) { sHtml = '<b>Locked in</b> fingers crossed'; sCls += ' locked'; }
+      else if (left > 0) {
+        var pts = 500 + Math.round(500 * Math.min(1, left / (g.duration_s || 20)));
+        sHtml = '<b>+' + pts + '</b> up for grabs';
+        if (shown <= 5) sCls += ' low';
+      }
+      if (stake.innerHTML !== sHtml) stake.innerHTML = sHtml;
+      stake.className = sCls;
+    }
     var bar = document.getElementById('bar');
     if (bar) bar.style.transform = 'scaleX(' + Math.max(0, Math.min(1, left / (g.duration_s || 20))) + ')';
     if (keyFor() !== screenKey) render();
