@@ -317,7 +317,7 @@
       };
       saveCard();
       if (Q.configured) call('host_set_card_mode', { p_on: true });
-      toast('Card mode on. Phone answers are off. Groups hold up A, B, C or D.');
+      toast('Card mode on. Phone answers are off. Teams hold up A, B, C or D.');
       render();
       return;
     }
@@ -383,7 +383,7 @@
       '<div class="lobby-side">' +
       '  <p class="kicker">Live quiz · 12 questions · 20 seconds each</p>' +
       '  <h1 class="h-big">Scan to <span class="grad-text">join</span></h1>' +
-      '  <p class="lobby-total">Type your name and tap your group. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
+      '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
       '  <div class="lobby-groups">' + groups + '</div>' + names +
       '</div></section>';
   }
@@ -407,7 +407,7 @@
 
   function cardButtons(g) {
     var picked = (H.card.awards[g.current_index] || []);
-    return '<p class="card-hint">Click each group that held up <b>' + Q.LETTERS[g.revealed_index] + '</b>. 100 points each.</p>' +
+    return '<p class="card-hint">Click each team that held up <b>' + Q.LETTERS[g.revealed_index] + '</b>. 100 points each.</p>' +
       '<div class="gstrip">' + Q.GROUPS.map(function (name) {
         var on = picked.indexOf(name) >= 0;
         return '<button type="button" class="gs" data-award="' + name + '" aria-pressed="' + on + '">' +
@@ -434,7 +434,7 @@
     var foot;
     if (!revealed) {
       var left = g.card_mode
-        ? '<span>Card round. Groups, get your A, B, C, D cards ready.</span>'
+        ? '<span>Card round. Teams, get your A, B, C, D cards ready.</span>'
         : '<span>Answers in: <b>' + ((H.view && H.view.answers_in) || 0) + ' / ' + players().length + '</b></span>';
       foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span></div>';
     } else {
@@ -476,7 +476,7 @@
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
       '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false) + '</div>' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">Groups</p>' + groupRows(s.ranked, false) + '</div>' +
+      '  <div><p class="kicker" style="margin-bottom:1.4vh">Teams</p>' + groupRows(s.ranked, false) + '</div>' +
       '</div></section>';
   }
 
@@ -494,7 +494,7 @@
     }
     var winners = r.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
     return '<section><p class="kicker">Final results</p>' +
-      '<h1 class="h-big">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning group: ') +
+      '<h1 class="h-big">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
       '<span class="grad-text">' + winners.join(' and ') + '</span></h1>' +
       '<div class="podium">' + pod(r[1], 2) + pod(r[0], 1) + pod(r[2], 3) + '</div>' +
       '<div class="rest">' + r.slice(3).map(function (x) {

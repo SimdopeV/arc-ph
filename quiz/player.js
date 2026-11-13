@@ -129,7 +129,7 @@
     if (!name) return showJoinError('Type your name first.');
     if (name.length > 20) return showJoinError('Use 20 characters or fewer.');
     if (Q.nameBlocked(name)) return showJoinError('Please pick a different name.');
-    if (!st.joinGroup) return showJoinError('Tap your group.');
+    if (!st.joinGroup) return showJoinError('Tap your team.');
     st.joining = true; updateJoinButton(); showJoinError('');
     wakeLock();
     Q.rpc('player_join', { p_code: Q.cfg.GAME_CODE, p_name: name, p_group: st.joinGroup }).then(function (r) {
@@ -140,7 +140,7 @@
           name_blocked: 'Please pick a different name.',
           name_required: 'Type your name first.',
           name_too_long: 'Use 20 characters or fewer.',
-          bad_group: 'Tap your group.',
+          bad_group: 'Tap your team.',
           game_not_found: 'The quiz is not open yet.',
           game_full: 'The quiz is full.'
         }[r.error] || (r.network ? 'No connection. Try again.' : 'Something went wrong. Try again.');
@@ -238,12 +238,12 @@
     }).join('');
     return '' +
       '<h1>Join the <span class="grad-text">live quiz</span></h1>' +
-      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Port Harcourt Community Meetup. Six groups, twelve questions.</p>') +
+      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. Six teams, twelve questions.</p>') +
       '<form id="joinForm" class="screen" novalidate autocomplete="off">' +
       '  <div class="field"><p class="label"><label for="name">Your name</label></p>' +
       '    <input id="name" name="name" maxlength="20" enterkeyhint="done" autocapitalize="words" spellcheck="false" required>' +
       '    <div class="count" id="count">0 / 20</div></div>' +
-      '  <div><p class="label">Your group</p><div class="groups" role="group" aria-label="Your group">' + groups + '</div></div>' +
+      '  <div><p class="label">Your team</p><div class="groups" role="group" aria-label="Your team">' + groups + '</div></div>' +
       '  <p class="error" id="joinError" role="alert"></p>' +
       '  <button class="primary" id="joinBtn" type="submit">Join</button>' +
       '</form>';
@@ -252,7 +252,7 @@
   function viewLobby() {
     return '<div class="card big-wait">' +
       '<h1>You\'re in, <span class="name">' + Q.esc(st.player.name) + '</span>.</h1>' +
-      '<p class="lede" style="margin-top:10px">' + Q.esc(st.player.group) + ' group. Watch the big screen.</p>' +
+      '<p class="lede" style="margin-top:10px">Team ' + Q.esc(st.player.group) + '. Watch the big screen.</p>' +
       '</div>' +
       '<p class="lede">The first question will show up here. Keep this page open.</p>';
   }
@@ -270,7 +270,7 @@
         '<span class="badge">' + letter(i) + '</span><span>' + Q.esc(text) + '</span></button>';
     }).join('');
     var status = '';
-    if (g.card_mode) status = '<p class="status-line">Card round. Hold up your group\'s card.</p>';
+    if (g.card_mode) status = '<p class="status-line">Card round. Hold up your team\'s card.</p>';
     else if (st.lock === 'sending' && locked) status = '<p class="status-line">Sending...</p>';
     else if (locked) status = '<p class="status-line">Answer locked. Waiting for everyone.</p>';
     else if (late) status = '<p class="status-line">Time\'s up.</p>';
@@ -320,8 +320,8 @@
       '<div class="card"><p class="label">Your score</p><p class="final-num">' + Q.num(st.total) + '</p></div>' +
       '<div class="card">' +
       '<div class="final-row" style="border-top:0"><span>Your rank</span><b>' + Q.ordinal(f.rank) + ' of ' + f.players + '</b></div>' +
-      '<div class="final-row"><span>' + Q.esc(st.player.group) + ' group</span><b>' + Q.ordinal(f.group_rank) + ' of ' + f.groups + '</b></div>' +
-      '<div class="final-row"><span>Group score</span><b>' + Q.num(f.group_score) + '</b></div>' +
+      '<div class="final-row"><span>Team ' + Q.esc(st.player.group) + '</span><b>' + Q.ordinal(f.group_rank) + ' of ' + f.groups + '</b></div>' +
+      '<div class="final-row"><span>Team score</span><b>' + Q.num(f.group_score) + '</b></div>' +
       '</div>' +
       '<p class="lede">Thanks for playing. Now go build something on Arc Studio.</p>';
   }
