@@ -42,7 +42,7 @@ body.host {
 .qr-card svg { width: min(52vh, 36vw); height: min(52vh, 36vw); display: block; }
 .qr-url { font-family: var(--font-mono); color: #0f1a30; font-size: 2.2vh; font-weight: 500; }
 .lobby-side { display: flex; flex-direction: column; gap: 3vh; min-width: 0; }
-.lobby-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6vh; }
+.lobby-groups { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.6vh; }
 .lg { background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 1.8vh; padding: 1.8vh 2vh; }
 .lg .n { font-family: var(--font-mono); font-size: 6vh; line-height: 1; font-weight: 500; }
 .lg .g { font-size: 2.2vh; color: var(--muted); margin-top: .6vh; }
@@ -96,7 +96,7 @@ body.host {
 .explain-big::before { content: ""; display: inline-block; width: 1.2vh; height: 1.2vh; border-radius: 50%; background: var(--grad-peach); margin-right: 1.4vh; vertical-align: .3vh; }
 
 /* Group strip and card mode buttons */
-.gstrip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1.2vh; }
+.gstrip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2vh; }
 .gs { background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 1.6vh; padding: 1.2vh 1.4vh; }
 .gs .g { font-size: 1.9vh; color: var(--muted); }
 .gs .s { font-family: var(--font-mono); font-size: 3.2vh; font-weight: 500; }

@@ -137,9 +137,11 @@ end $$;
 -- ---------------------------------------------------------------- internal helpers
 -- These start with an underscore and are not executable by anon.
 
+-- The teams in play. The check constraints above also allow Rachel and Blessing,
+-- so a past game's rows stay valid; only the teams listed here can be joined.
 create or replace function public._groups()
 returns text[] language sql immutable as $$
-  select array['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing']
+  select array['Bobbilee', 'Sam', 'Tim', 'Jeremy']
 $$;
 
 create or replace function public._name_is_blocked(p_name text)
@@ -430,7 +432,7 @@ begin
     select * into grp from public._group_scores(g.id) s where s.group_name = p.group_name;
     fin := jsonb_build_object(
       'rank', me.rank, 'players', n_players,
-      'group_rank', grp.rank, 'groups', 6,
+      'group_rank', grp.rank, 'groups', array_length(public._groups(), 1),
       'group_score', round(grp.score));
   end if;
 

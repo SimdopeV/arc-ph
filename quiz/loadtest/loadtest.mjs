@@ -20,7 +20,7 @@ const PIN = opt('pin', process.env.HOST_PIN);
 const CODE = opt('code', 'ARCPH');
 const N = Number(opt('players', 100));
 const FAST = flag('fast');
-const GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing'];
+const GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Jeremy'];
 
 if (!URL_ || !KEY || !PIN) {
   console.error('Set SUPABASE_URL, SUPABASE_ANON_KEY and HOST_PIN (or pass --url --key --pin).');

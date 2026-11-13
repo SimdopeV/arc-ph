@@ -238,7 +238,7 @@
     }).join('');
     return '' +
       '<h1>Join the <span class="grad-text">live quiz</span></h1>' +
-      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. Six teams, twelve questions.</p>') +
+      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. Four teams, twelve questions.</p>') +
       '<form id="joinForm" class="screen" novalidate autocomplete="off">' +
       '  <div class="field"><p class="label"><label for="name">Your name</label></p>' +
       '    <input id="name" name="name" maxlength="20" enterkeyhint="done" autocapitalize="words" spellcheck="false" required>' +
