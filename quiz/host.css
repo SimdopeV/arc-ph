@@ -77,6 +77,10 @@ body.host {
 .htile .row { display: flex; align-items: center; gap: 2vh; }
 .htile .badge { width: 7vh; height: 7vh; font-size: 3.6vh; border-radius: 1.4vh; }
 .htile .txt { font-size: min(4vh, 2.5vw); line-height: 1.15; font-weight: 500; overflow-wrap: anywhere; }
+/* True or False: two big tiles, big centred words. */
+.tiles:has(> .htile:nth-child(2):last-child) .htile .row { flex-direction: column; justify-content: center; gap: 2.4vh; }
+.tiles:has(> .htile:nth-child(2):last-child) .htile .txt { font-size: 10vh; font-weight: 700; letter-spacing: -.01em; line-height: 1; text-align: center; }
+.tiles:has(> .htile:nth-child(2):last-child) .htile .badge { width: 8vh; height: 8vh; font-size: 4.4vh; }
 .htile.dim { opacity: .28; }
 .htile.right { box-shadow: 0 0 0 .6vh #fff, 0 0 6vh rgba(243, 202, 148, .45); transform: scale(1.015); }
 .dist { display: flex; align-items: center; gap: 1.4vh; }
@@ -155,7 +159,22 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
 .controls button:disabled { opacity: .4; cursor: default; }
 .controls .sep { flex: 1; }
 .controls .keys { font-family: var(--font-mono); font-size: 1.3vh; color: var(--muted); }
+.controls .switch.arm { background: #942753; border-color: #F3966F; opacity: 1; }
+.controls .switch.on { background: #942753; border-color: #F3966F; }
 .switch input { width: 1.8vh; height: 1.8vh; accent-color: #F3966F; margin: 0; }
+
+/* Card mode warning across the top of the projector, so nobody misses it. */
+.card-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 25;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 1vh 2vh;
+  padding: 1.4vh 3vw; background: #942753; color: #fff; border-bottom: .4vh solid #F3966F;
+  font-size: 2.6vh; font-weight: 700; text-align: center;
+}
+.card-banner b {
+  font-family: var(--font-mono); font-size: 2.4vh; letter-spacing: .12em; text-transform: uppercase;
+  background: var(--grad-peach); color: var(--dark-ink); padding: .5vh 1.4vh; border-radius: 1vh;
+}
+.card-banner small { font-size: 2vh; font-weight: 500; opacity: .9; }
 
 .toast {
   position: fixed; top: 9vh; left: 50%; transform: translateX(-50%); z-index: 30;

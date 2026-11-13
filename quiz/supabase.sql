@@ -64,8 +64,9 @@ create table public.questions (
   idx           int  not null,
   category      text not null,
   text          text not null,
-  options       jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) = 4),
+  options       jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 4),
   correct_index int  not null check (correct_index between 0 and 3),
+  check (correct_index < jsonb_array_length(options)),
   explanation   text not null,
   primary key (game_id, idx)
 );
@@ -320,7 +321,7 @@ begin
      where game_id = p_game and question_idx = g.current_index;
     if g.status in ('reveal', 'leaderboard', 'final') then
       select jsonb_agg(coalesce(c.n, 0) order by s.i) into dist
-        from generate_series(0, 3) s(i)
+        from generate_series(0, coalesce(jsonb_array_length(g.options), 4) - 1) s(i)
         left join (select choice, count(*)::int n from public.answers
                     where game_id = p_game and question_idx = g.current_index
                     group by choice) c on c.choice = s.i;
@@ -474,6 +475,9 @@ begin
   v_elapsed := least(greatest(v_elapsed, 0), g.duration_s);
 
   select * into q from public.questions where game_id = g.id and idx = g.current_index;
+  if p_choice >= jsonb_array_length(q.options) then
+    return jsonb_build_object('error', 'bad_choice');
+  end if;
   v_correct := (p_choice = q.correct_index);
   v_points := case when v_correct
                    then 500 + round(500 * (1 - v_elapsed / g.duration_s))::int

@@ -321,6 +321,7 @@
       render();
       return;
     }
+    if (!cardOn()) { toggle.checked = false; return; } // already off
     if (!H.online) {
       toggle.checked = true;
       toast('Card mode stays on until the internet is back.');
@@ -434,7 +435,7 @@
     var foot;
     if (!revealed) {
       var left = g.card_mode
-        ? '<span>Card round. Teams, get your A, B, C, D cards ready.</span>'
+        ? '<span>Card round. Teams, get your ' + Q.LETTERS.slice(0, o.length).join(', ') + ' cards ready.</span>'
         : '<span>Answers in: <b>' + ((H.view && H.view.answers_in) || 0) + ' / ' + players().length + '</b></span>';
       foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span></div>';
     } else {
@@ -594,6 +595,7 @@
     chip.className = 'chip ' + (H.online ? 'live' : 'off');
     chip.lastChild.textContent = H.online ? 'Live' : (Q.configured ? 'Offline' : 'Not set up');
     $('cardChip').hidden = !cardOn();
+    $('cardBanner').hidden = !cardOn();
   }
 
   function renderControls() {
@@ -617,6 +619,10 @@
     $('manageBtn').hidden = s !== 'lobby';
     $('manageBtn').setAttribute('aria-pressed', String(H.manage));
     $('cardToggle').checked = cardOn();
+    var armedCard = H.armed.card > now;
+    var sw = $('cardToggle').parentNode;
+    sw.className = 'switch' + (armedCard ? ' arm' : '') + (cardOn() ? ' on' : '');
+    sw.lastChild.textContent = armedCard ? 'Click again for card mode' : 'Card mode';
   }
 
   // Timer ring, status line and auto-reveal at time up (after the 1 second grace).
@@ -764,8 +770,19 @@
   $('cardToggle').addEventListener('change', function (e) {
     e.target.blur();
     if (!H.unlocked) { e.target.checked = cardOn(); return; }
-    setCardMode(e.target.checked);
+    var want = e.target.checked; // read first: armed() redraws the controls and resets the box
+    // Turning card mode ON stops every phone from answering, so it takes two clicks
+    // (like End quiz). Turning it off is one click.
+    if (want && !cardOn() &&
+        !armed('card', 'Click Card mode again to turn phone answers off. Teams then hold up cards.')) {
+      e.target.checked = false;
+      return;
+    }
+    setCardMode(want);
   });
+  // Space is the host's Next key: never let it flip the checkbox if it has focus.
+  $('cardToggle').addEventListener('keyup', function (e) { if (e.key === ' ') e.preventDefault(); });
+  $('cardToggle').addEventListener('keydown', function (e) { if (e.key === ' ') e.preventDefault(); });
   stage.addEventListener('click', function (e) {
     var aw = e.target.closest('[data-award]');
     if (aw) return toggleAward(aw.getAttribute('data-award'));
