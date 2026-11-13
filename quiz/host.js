@@ -8,7 +8,8 @@
   var PLAYER_URL = Q.cfg.PLAYER_URL || 'https://simdopev.github.io/arc-ph/quiz/';
   var K = {
     pin: 'arcq_pin', pinHash: 'arcq_pin_hash_' + CODE, view: 'arcq_host_view_' + CODE,
-    qs: 'arcq_host_questions_' + CODE, card: 'arcq_host_card_' + CODE
+    qs: 'arcq_host_questions_' + CODE, card: 'arcq_host_card_' + CODE,
+    hideScores: 'arcq_hide_team_scores'
   };
 
   var H = {
@@ -25,6 +26,7 @@
     autoRevealed: {},
     lastHtml: '',
     podiumShown: false,
+    hideScores: Q.local.get(K.hideScores) === 'on', // team scores stay secret until the final results
     qr: null
   };
 
@@ -440,7 +442,7 @@
       foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span></div>';
     } else {
       foot = (g.explanation ? '<p class="explain-big">' + esc(g.explanation) + '</p>' : '') +
-        (g.card_mode && g.status === 'reveal' ? cardButtons(g) : groupStrip(true));
+        (g.card_mode && g.status === 'reveal' ? cardButtons(g) : (H.hideScores ? '' : groupStrip(true)));
     }
 
     return '<section>' +
@@ -477,7 +479,9 @@
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
       '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false) + '</div>' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">Teams</p>' + groupRows(s.ranked, false) + '</div>' +
+      '  <div><p class="kicker" style="margin-bottom:1.4vh">Teams</p>' + (H.hideScores
+        ? '<p class="scores-hidden">Team scores are <b>top secret</b> until the final results.</p>'
+        : groupRows(s.ranked, false)) + '</div>' +
       '</div></section>';
   }
 
@@ -618,6 +622,8 @@
     $('resetBtn').className = H.armed.reset > now ? 'arm' : '';
     $('manageBtn').hidden = s !== 'lobby';
     $('manageBtn').setAttribute('aria-pressed', String(H.manage));
+    $('scoresBtn').setAttribute('aria-pressed', String(H.hideScores));
+    $('scoresBtn').textContent = H.hideScores ? 'Team scores hidden' : 'Team scores shown';
     $('cardToggle').checked = cardOn();
     var armedCard = H.armed.card > now;
     var sw = $('cardToggle').parentNode;
@@ -760,6 +766,13 @@
     else if (a === 'end') end();
     else if (a === 'reset') reset();
     else if (a === 'manage') { H.manage = !H.manage; render(); }
+    else if (a === 'scores') {
+      H.hideScores = !H.hideScores;
+      Q.local.set(K.hideScores, H.hideScores ? 'on' : 'off');
+      toast(H.hideScores ? 'Team scores hidden until the final results.' : 'Team scores shown.');
+      renderControls();
+      render();
+    }
     else if (a === 'fullscreen') {
       try {
         if (document.fullscreenElement) document.exitFullscreen();

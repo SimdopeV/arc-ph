@@ -158,6 +158,8 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
 .controls button[aria-pressed="true"] { border-color: #F3966F; }
 .controls button:disabled { opacity: .4; cursor: default; }
 .controls .sep { flex: 1; }
+.scores-hidden { font-size: 3vh; line-height: 1.3; color: var(--muted); margin: 0; padding: 3vh 2.4vh; border: 1px dashed var(--line); border-radius: 2vh; }
+.scores-hidden b { color: #F3CA94; }
 .controls .keys { font-family: var(--font-mono); font-size: 1.3vh; color: var(--muted); }
 .controls .switch.arm { background: #942753; border-color: #F3966F; opacity: 1; }
 .controls .switch.on { background: #942753; border-color: #F3966F; }
