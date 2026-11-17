@@ -4,7 +4,17 @@
   var Q = (window.Quiz = {});
 
   Q.cfg = cfg;
-  Q.GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Jeremy']; // keep in step with _groups() in supabase.sql
+  // The teams and the event name come from the game row (set on the host page:
+  // Setup, in the lobby). These are only the fallback until that row arrives.
+  Q.GROUPS = ['Bobbilee', 'Sam', 'Tim', 'Jeremy'];
+  Q.EVENT = 'Community Meetup';
+  Q.useGame = function (g) {
+    if (!g) return;
+    var t = g.teams;
+    if (typeof t === 'string') { try { t = JSON.parse(t); } catch (e) { t = null; } }
+    if (Array.isArray(t) && t.length) Q.GROUPS = t.map(String);
+    if (g.event_name) Q.EVENT = String(g.event_name);
+  };
   Q.LETTERS = ['A', 'B', 'C', 'D'];
   Q.configured = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY &&
     cfg.SUPABASE_URL.indexOf('YOUR-') < 0 && cfg.SUPABASE_ANON_KEY.indexOf('YOUR-') < 0);
@@ -29,6 +39,20 @@
       realtime: { params: { eventsPerSecond: 2 } }
     });
   }
+
+  // The event name and teams for someone who has not joined yet.
+  Q.fetchSetup = function () {
+    if (!Q.client) return Promise.resolve(null);
+    try {
+      return Q.client.from('games').select('event_name, teams')
+        .eq('join_code', cfg.GAME_CODE || 'ARCPH').limit(1)
+        .then(function (res) {
+          var row = res && res.data && res.data[0];
+          if (row) Q.useGame(row);
+          return row || null;
+        }, function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  };
 
   // RPC with a timeout. Resolves { data } or { error, network }.
   Q.rpc = function (fn, args, timeoutMs) {

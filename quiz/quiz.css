@@ -134,6 +134,9 @@ body.hurry::after { animation: heart-glow 1s ease-out infinite; }
 .count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: right; margin-top: 6px; }
 
 .groups { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.groups.many { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.groups.many .group-btn { min-height: 46px; padding: 6px 8px; font-size: 15px; }
+.group-btn { overflow: hidden; text-overflow: ellipsis; }
 .group-btn {
   min-height: 64px; border-radius: 14px; border: 1px solid var(--line); background: rgba(21, 35, 63, .8);
   font-size: 18px; font-weight: 500; cursor: pointer; transition: transform .18s var(--spring), box-shadow .18s ease;

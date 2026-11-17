@@ -404,3 +404,43 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
   .pk-body { grid-template-columns: 1fr; grid-template-rows: 1.4fr 1fr; }
   .pk-bank { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* ---------- Any number of teams (2 to 20) ---------- */
+.lg .g { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-groups.dense { gap: 1vh; }
+.lobby-groups.dense .lg { padding: 1vh 1.4vh; border-radius: 1.4vh; }
+.lobby-groups.dense .lg .n { font-size: 3.8vh; }
+.lobby-groups.dense .lg .g { font-size: 1.8vh; margin-top: .3vh; }
+.gs { min-width: 0; }
+.gs .g { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gstrip.dense { gap: .8vh; }
+.gstrip.dense .gs { padding: .7vh 1vh; border-radius: 1.2vh; }
+.gstrip.dense .gs .g { font-size: 1.5vh; }
+.gstrip.dense .gs .s { font-size: 2.3vh; }
+.rest { flex-wrap: wrap; }
+.rest.dense { gap: .8vh 1vw; }
+.rest.dense .lrow { min-width: 0; flex: 0 1 15vw; padding: .6vh 1.2vh; gap: 1vh; grid-template-columns: 3vh 1fr auto auto; }
+.rest.dense .lrow .r, .rest.dense .lrow .nm, .rest.dense .lrow .sc { font-size: 1.9vh; }
+.is-final .podium { min-height: 0; }
+
+/* ---------- Setup dialog: event name and teams ---------- */
+.su-panel { width: min(640px, 100%); height: auto; max-height: 100%; }
+.su-body { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.su-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.su-label b { color: #F3CA94; font-weight: 500; margin-left: 6px; }
+.su-body input {
+  min-height: 42px; width: 100%; min-width: 0; font: inherit; color: #fff; background: #0f1a30;
+  border: 1px solid var(--line); border-radius: 10px; padding: 0 12px;
+}
+.su-body input:focus { outline: 2px solid #F3966F; outline-offset: 1px; }
+.su-body input[readonly] { opacity: .7; }
+.su-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.su-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.su-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.su-team { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; min-width: 0; }
+.su-team .n { font-family: var(--font-mono); color: #F3CA94; font-size: 13px; text-align: right; }
+.su-team button { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: #fff; cursor: pointer; font-size: 15px; }
+.su-team button:hover { border-color: #F3966F; }
+.su-team button:disabled { opacity: .25; cursor: default; }
+.su-body .primary { min-height: 50px; font-size: 17px; margin-top: 4px; }
+@media (max-width: 560px) { .su-teams { grid-template-columns: 1fr; } }

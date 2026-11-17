@@ -31,6 +31,7 @@ drop table if exists public.question_bank cascade;
 drop table if exists public.questions cascade;
 drop table if exists public.game_secrets cascade;
 drop table if exists public.games cascade;
+drop function if exists public._groups();  -- older versions had a fixed team list
 
 -- ---------------------------------------------------------------- tables
 create table public.games (
@@ -49,6 +50,9 @@ create table public.games (
   revealed_index  int,
   explanation     text,
   card_mode       boolean not null default false,
+  -- Set on the host page (Setup button, in the lobby).
+  event_name      text not null default 'Community Meetup',
+  teams           jsonb not null default '["Bobbilee", "Sam", "Tim", "Jeremy"]'::jsonb,
   updated_at      timestamptz not null default now()
 );
 
@@ -95,7 +99,7 @@ create table public.players (
   id         uuid primary key default gen_random_uuid(),
   game_id    uuid not null references public.games (id) on delete cascade,
   name       text not null check (char_length(name) between 1 and 20),
-  group_name text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing')),
+  group_name text not null,  -- one of games.teams (checked in player_join)
   joined_at  timestamptz not null default now()
 );
 create index players_game_idx on public.players (game_id);
@@ -118,7 +122,7 @@ create index answers_game_q_idx on public.answers (game_id, question_idx);
 create table public.card_awards (
   game_id      uuid not null references public.games (id) on delete cascade,
   question_idx int  not null,
-  group_name   text not null check (group_name in ('Bobbilee', 'Sam', 'Tim', 'Rachel', 'Jeremy', 'Blessing')),
+  group_name   text not null,
   primary key (game_id, question_idx, group_name)
 );
 
@@ -158,11 +162,12 @@ end $$;
 -- ---------------------------------------------------------------- internal helpers
 -- These start with an underscore and are not executable by anon.
 
--- The teams in play. The check constraints above also allow Rachel and Blessing,
--- so a past game's rows stay valid; only the teams listed here can be joined.
-create or replace function public._groups()
-returns text[] language sql immutable as $$
-  select array['Bobbilee', 'Sam', 'Tim', 'Jeremy']
+-- The teams in play, in the order the host set them (games.teams).
+create or replace function public._groups(p_game uuid)
+returns text[] language sql stable as $$
+  select coalesce(array_agg(t.name order by t.ord), '{}')
+  from public.games g, jsonb_array_elements_text(g.teams) with ordinality as t(name, ord)
+  where g.id = p_game
 $$;
 
 create or replace function public._name_is_blocked(p_name text)
@@ -199,7 +204,8 @@ returns jsonb language sql stable as $$
     'question_text', g.question_text, 'options', g.options,
     'started_at', g.started_at, 'paused_at', g.paused_at,
     'revealed_index', g.revealed_index, 'explanation', g.explanation,
-    'card_mode', g.card_mode, 'updated_at', g.updated_at)
+    'card_mode', g.card_mode, 'event_name', g.event_name, 'teams', g.teams,
+    'updated_at', g.updated_at)
 $$;
 
 -- Player totals with leaderboard labels ("Ada (2)") and rank.
@@ -234,7 +240,7 @@ returns table (group_name text, members int, avg_total numeric, card_points int,
                score numeric, correct int, rank int)
 language sql stable as $$
   with gs as (
-    select x.group_name, x.ord from unnest(public._groups()) with ordinality as x(group_name, ord)
+    select x.group_name, x.ord from unnest(public._groups(p_game)) with ordinality as x(group_name, ord)
   ), pt as (
     select * from public._player_totals(p_game)
   ), agg as (
@@ -413,7 +419,7 @@ begin
   if char_length(v_name) < 1 then return jsonb_build_object('error', 'name_required'); end if;
   if char_length(v_name) > 20 then return jsonb_build_object('error', 'name_too_long'); end if;
   if public._name_is_blocked(v_name) then return jsonb_build_object('error', 'name_blocked'); end if;
-  if not (p_group = any (public._groups())) then return jsonb_build_object('error', 'bad_group'); end if;
+  if not (p_group = any (public._groups(g.id))) then return jsonb_build_object('error', 'bad_group'); end if;
   if (select count(*) from public.players where game_id = g.id) >= 300 then
     return jsonb_build_object('error', 'game_full');
   end if;
@@ -465,7 +471,7 @@ begin
     select * into grp from public._group_scores(g.id) s where s.group_name = p.group_name;
     fin := jsonb_build_object(
       'rank', me.rank, 'players', n_players,
-      'group_rank', grp.rank, 'groups', array_length(public._groups(), 1),
+      'group_rank', grp.rank, 'groups', array_length(public._groups(g.id), 1),
       'group_score', round(grp.score));
   end if;
 
@@ -742,6 +748,45 @@ begin
   return public._host_view(a.p_game, 'questions_set');
 end $$;
 
+-- The event name and the teams, set by the host in the lobby.
+-- Teams: 2 to 20, each 1 to 20 characters, no repeats. A team that already has
+-- players cannot be removed or renamed (remove the players or reset first).
+create or replace function public.host_set_setup(p_code text, p_pin text, p_event text, p_teams text[])
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  a record; g public.games;
+  v_event text := regexp_replace(trim(coalesce(p_event, '')), '\s+', ' ', 'g');
+  v_teams text[];
+  n int;
+begin
+  a := public._host_auth(p_code, p_pin);
+  if a.p_game is null then return jsonb_build_object('error', a.p_err); end if;
+  select * into g from public.games where id = a.p_game for update;
+  if g.status <> 'lobby' then return public._host_view(a.p_game, 'not_in_lobby'); end if;
+  if char_length(v_event) < 1 or char_length(v_event) > 40 then
+    return public._host_view(a.p_game, 'bad_event');
+  end if;
+  select coalesce(array_agg(x.name order by x.ord), '{}') into v_teams
+    from (select regexp_replace(trim(t.name), '\s+', ' ', 'g') as name, t.ord
+            from unnest(coalesce(p_teams, '{}')) with ordinality as t(name, ord)) x
+   where x.name <> '';
+  n := coalesce(array_length(v_teams, 1), 0);
+  if n < 2 or n > 20 then return public._host_view(a.p_game, 'bad_team_count'); end if;
+  if exists (select 1 from unnest(v_teams) x
+              where char_length(x) > 20 or x ~ '[<>"]' or public._name_is_blocked(x))
+     or (select count(distinct lower(x)) from unnest(v_teams) x) <> n then
+    return public._host_view(a.p_game, 'bad_teams');
+  end if;
+  if exists (select 1 from public.players p
+              where p.game_id = a.p_game and not (p.group_name = any (v_teams))) then
+    return public._host_view(a.p_game, 'team_in_use');
+  end if;
+  delete from public.card_awards where game_id = a.p_game and not (group_name = any (v_teams));
+  update public.games set event_name = v_event, teams = to_jsonb(v_teams), updated_at = now()
+   where id = a.p_game;
+  return public._host_view(a.p_game, 'setup_saved');
+end $$;
+
 -- Wipes players, answers and card awards and returns to the lobby.
 create or replace function public.host_reset(p_code text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -788,7 +833,7 @@ begin
   delete from public.card_awards where game_id = a.p_game and question_idx = p_index;
   insert into public.card_awards (game_id, question_idx, group_name)
   select a.p_game, p_index, x from unnest(coalesce(p_groups, '{}')) x
-  where x = any (public._groups())
+  where x = any (public._groups(a.p_game))
   on conflict do nothing;
   return public._host_view(a.p_game);
 end $$;
@@ -826,6 +871,7 @@ grant execute on function
   public.host_questions(text, text),
   public.host_bank(text, text),
   public.host_set_questions(text, text, int[]),
+  public.host_set_setup(text, text, text, text[]),
   public.host_start(text, text),
   public.host_open_question(text, text, text, int, int),
   public.host_reveal(text, text, int),

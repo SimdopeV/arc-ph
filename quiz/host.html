@@ -19,7 +19,7 @@
     <img class="logo" src="Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
     <span class="pill">Prompt · Debug · Deploy</span>
   </div>
-  <div class="event">Ogbomoso <span>|</span> Community Meetup</div>
+  <div class="event" id="eventName">Community Meetup</div>
   <div class="conn">
     <span class="chip card-chip" id="cardChip" hidden>Card mode</span>
     <span class="chip" id="connChip"><i></i><span>Connecting</span></span>
@@ -42,6 +42,7 @@
   <button type="button" data-act="end" id="endBtn">End quiz</button>
   <button type="button" data-act="reset" id="resetBtn">Reset game</button>
   <span class="sep"></span>
+  <button type="button" data-act="setup" id="setupBtn">Setup</button>
   <button type="button" data-act="questions" id="questionsBtn">Questions</button>
   <button type="button" data-act="manage" id="manageBtn" aria-pressed="false">Players</button>
   <button type="button" data-act="scores" id="scoresBtn" aria-pressed="false">Team scores shown</button>
@@ -85,6 +86,33 @@
         <p class="pk-msg" id="pkMsg" role="status"></p>
         <button type="button" class="primary" data-pk="save" id="pkSave">Save quiz</button>
       </aside>
+    </div>
+  </div>
+</div>
+
+<div class="picker" id="setup" hidden>
+  <div class="pk-panel su-panel" role="dialog" aria-modal="true" aria-labelledby="suTitle">
+    <header class="pk-head">
+      <div>
+        <p>Setup</p>
+        <h2 id="suTitle">Event name and teams</h2>
+      </div>
+      <div class="pk-head-actions">
+        <button type="button" class="pk-btn" data-su="close" id="suClose">Close</button>
+      </div>
+    </header>
+    <div class="su-body">
+      <label class="su-label" for="suEvent">Event name</label>
+      <input id="suEvent" maxlength="40" autocomplete="off" placeholder="Community Meetup">
+      <p class="su-hint">Shown at the top of the big screen and on the phone join page.</p>
+      <div class="su-row">
+        <span class="su-label">Teams <b id="suCount"></b></span>
+        <button type="button" class="pk-btn" data-su="add" id="suAdd">Add a team</button>
+      </div>
+      <div class="su-teams" id="suTeams"></div>
+      <p class="su-hint">2 to 20 teams. Players tap one of these on their phone. A team that already has players is locked.</p>
+      <p class="pk-msg" id="suMsg" role="status"></p>
+      <button type="button" class="primary" data-su="save" id="suSave">Save</button>
     </div>
   </div>
 </div>

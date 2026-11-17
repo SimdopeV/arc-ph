@@ -44,6 +44,12 @@ If you forget the questions file, the host page says "No questions loaded" and t
 
 If the database was created before the bank existed, run `migrations/question_bank.sql` once first. It adds the bank without touching players, scores or the PIN.
 
+### Event name and teams
+
+On the host page, in the lobby, press **Setup**. Type the event name (it shows at the top of the big screen and on the phone join page) and edit the teams: rename them, remove them or press **Add a team**. You can have 2 to 20 teams. Press **Save**. A team that already has players is locked, so set the teams before people join, or remove those players first. With more than eight teams the leaderboard shows the top eight; the final screen shows them all.
+
+If the database was created before this existed, run `migrations/editable_setup.sql` once first. It keeps the teams you have now.
+
 To choose the questions for a quiz: on the host page, in the lobby, press **Questions**. Filter by module or search, press **+** on each question you want, put them in order with the arrows (or **Shuffle**), then **Save quiz**. Click a question to see its options. **Show answers** highlights the right answer, so keep it unticked while the projector is showing your screen. A tag says whether each answer has been checked. The quiz can only be changed in the lobby, before it starts.
 
 ## 3. Set the host PIN
@@ -83,7 +89,7 @@ Commit and push to `main`. GitHub Pages serves the pages a minute later.
 | Space or Enter (or a clicker's next button) | Next step: Start, Reveal, Leaderboard, Next question, Final results, Top players |
 | Left arrow (or a clicker's back button) | Back |
 
-Buttons at the bottom of the screen (they brighten when the mouse is over them): Back, Pause, the next step, End quiz, Reset game, Questions, Players, Team scores, Sound, Voice, Card mode, Full screen. End quiz and Reset game need two clicks.
+Buttons at the bottom of the screen (they brighten when the mouse is over them): Back, Pause, the next step, End quiz, Reset game, Setup, Questions, Players, Team scores, Sound, Voice, Card mode, Full screen. End quiz and Reset game need two clicks.
 
 **Sound** plays the effects (join blip, heartbeat for the last five seconds, reveal chime, drumroll and fanfare). **Voice** makes the browser read out questions, answers and winners. Both are on by default and are made in the browser, so plug the laptop into the room speakers. The browser only allows sound after you have clicked or pressed a key on the page once.
 

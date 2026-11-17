@@ -103,6 +103,7 @@
     if (st.game && Q.ts(row.updated_at) < Q.ts(st.game.updated_at)) return false;
     var prev = st.game;
     st.game = row;
+    Q.useGame(row);
     if (row.current_index !== st.choiceIdx) {
       st.choice = null; st.choiceIdx = null; st.lock = null; st.sendError = '';
     }
@@ -170,10 +171,11 @@
           name_blocked: 'Please pick a different name.',
           name_required: 'Type your name first.',
           name_too_long: 'Use 20 characters or fewer.',
-          bad_group: 'Tap your team.',
+          bad_group: 'The teams have changed. Tap your team again.',
           game_not_found: 'The quiz is not open yet.',
           game_full: 'The quiz is full.'
         }[r.error] || (r.network ? 'No connection. Try again.' : 'Something went wrong. Try again.');
+        if (r.error === 'bad_group') refreshSetup();
         return showJoinError(msg);
       }
       st.playerId = r.data.player_id;
@@ -348,19 +350,35 @@
   }
   function viewLoading() { return '<p class="lede">Loading...</p>'; }
 
+  // Before joining there is no game row yet, so ask for the event name and teams.
+  // The typed name survives the redraw.
+  function refreshSetup() {
+    return Q.fetchSetup().then(function (row) {
+      if (!row || st.playerId) return;
+      var input = document.getElementById('name');
+      var typed = input ? input.value : '';
+      if (Q.GROUPS.indexOf(st.joinGroup) < 0) st.joinGroup = null;
+      screenKey = '';
+      render();
+      input = document.getElementById('name');
+      if (input && typed) { input.value = typed; input.dispatchEvent(new Event('input')); }
+    });
+  }
+
   function viewJoin() {
     var groups = Q.GROUPS.map(function (g) {
-      return '<button type="button" class="group-btn" data-group="' + g + '" aria-pressed="' + (st.joinGroup === g) + '">' + g + '</button>';
+      return '<button type="button" class="group-btn" data-group="' + Q.esc(g) + '" aria-pressed="' + (st.joinGroup === g) + '">' + Q.esc(g) + '</button>';
     }).join('');
-    var count = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'][Q.GROUPS.length] || String(Q.GROUPS.length);
+    var words = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
+    var count = words[Q.GROUPS.length] || String(Q.GROUPS.length);
     return '' +
       '<h1>Join the <span class="grad-text">live quiz</span></h1>' +
-      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. ' + count + ' teams, one winner.</p>') +
+      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">' + Q.esc(Q.EVENT) + '. ' + count + ' teams, one winner.</p>') +
       '<form id="joinForm" class="screen" novalidate autocomplete="off">' +
       '  <div class="field"><p class="label"><label for="name">Your name</label></p>' +
       '    <input id="name" name="name" maxlength="20" enterkeyhint="done" autocapitalize="words" spellcheck="false" required>' +
       '    <div class="count" id="count">0 / 20</div></div>' +
-      '  <div><p class="label">Your team</p><div class="groups" role="group" aria-label="Your team">' + groups + '</div></div>' +
+      '  <div><p class="label">Your team</p><div class="groups' + (Q.GROUPS.length > 8 ? ' many' : '') + '" role="group" aria-label="Your team">' + groups + '</div></div>' +
       '  <p class="error" id="joinError" role="alert"></p>' +
       '  <button class="primary" id="joinBtn" type="submit">Join</button>' +
       '</form>';
@@ -586,6 +604,6 @@
   });
 
   render();
-  if (st.playerId) sync();
+  if (st.playerId) sync(); else refreshSetup();
   setTimeout(pollLoop, 15000);
 })();

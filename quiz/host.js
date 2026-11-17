@@ -36,6 +36,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var stage = $('stage');
+  if (H.view && H.view.game) Q.useGame(H.view.game); // teams and event name from the last visit
 
   // ---------------------------------------------------------------- state
   function cardOn() { return !!(H.card && H.card.on); }
@@ -104,6 +105,7 @@
     var cur = H.view && H.view.game;
     if (cur && cur.id === v.game.id && Q.ts(v.game.updated_at) < Q.ts(cur.updated_at)) return; // older poll
     H.view = v;
+    Q.useGame(v.game);
     if (v.game.status !== 'final') H.finalStep = 0;
     Q.local.setJSON(K.view, v);
   }
@@ -517,9 +519,11 @@
     var ps = players();
     ps.forEach(function (p) { counts[p.group] = (counts[p.group] || 0) + 1; });
     var groups = Q.GROUPS.map(function (name) {
-      return '<div class="lg' + (counts[name] ? ' has' : '') + '" data-g="' + name + '"><div class="n">' + counts[name] +
-        '</div><div class="g">' + name + '</div></div>';
+      return '<div class="lg' + (counts[name] ? ' has' : '') + '" data-g="' + esc(name) + '"><div class="n">' + counts[name] +
+        '</div><div class="g">' + esc(name) + '</div></div>';
     }).join('');
+    var nTeams = Q.GROUPS.length;
+    var cols = nTeams <= 4 ? 2 : nTeams <= 9 ? 3 : nTeams <= 16 ? 4 : 5;
     var names;
     if (H.manage) {
       names = '<div class="names manage">' + (ps.length ? ps.map(function (p) {
@@ -541,7 +545,7 @@
       '  <p class="kicker">Live quiz · ' + total + (total === 1 ? ' question' : ' questions') + ' · ' + ((g && g.duration_s) || 20) + ' seconds each</p>' +
       '  <h1 class="h-big">Scan to <span class="grad-text">join</span></h1>' +
       '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
-      '  <div class="lobby-groups">' + groups + '</div>' + names +
+      '  <div class="lobby-groups' + (nTeams > 6 ? ' dense' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + groups + '</div>' + names +
       '</div></section>';
   }
 
@@ -565,7 +569,9 @@
       var el = stage.querySelector('.names span[data-id="' + p.id + '"]');
       if (el) { el.classList.add('pop'); setTimeout(function () { el.classList.remove('pop'); }, 1800); }
     });
-    Object.keys(teams).forEach(function (name) { bump(stage.querySelector('.lg[data-g="' + name + '"]')); });
+    Array.prototype.forEach.call(stage.querySelectorAll('.lg'), function (el) {
+      if (teams[el.getAttribute('data-g')]) bump(el);
+    });
     bump(stage.querySelector('.lobby-total b'));
     if (H.announceReady) { sfx.join(); voice.welcome(fresh); }
   }
@@ -578,22 +584,29 @@
       '</svg><div class="t" id="ringT"></div></div>';
   }
 
+  // One row for up to six teams, two rows beyond that.
+  function stripAttr() {
+    var n = Q.GROUPS.length;
+    var cols = n <= 6 ? n : Math.ceil(n / 2);
+    return ' class="gstrip' + (n > 6 ? ' dense' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)"';
+  }
+
   function groupStrip(lead) {
     var s = standings();
     var top = s.ranked[0];
-    return '<div class="gstrip">' + s.rows.map(function (r) {
+    return '<div' + stripAttr() + '>' + s.rows.map(function (r) {
       var isLead = lead && top && r.rank === 1 && r.score > 0;
-      return '<div class="gs' + (isLead ? ' lead' : '') + '"><div class="g">' + r.name + '</div><div class="s">' + Q.num(r.score) + '</div></div>';
+      return '<div class="gs' + (isLead ? ' lead' : '') + '"><div class="g">' + esc(r.name) + '</div><div class="s">' + Q.num(r.score) + '</div></div>';
     }).join('') + '</div>';
   }
 
   function cardButtons(g) {
     var picked = (H.card.awards[g.current_index] || []);
     return '<p class="card-hint">Click each team that held up <b>' + Q.LETTERS[g.revealed_index] + '</b>. 100 points each.</p>' +
-      '<div class="gstrip">' + Q.GROUPS.map(function (name) {
+      '<div' + stripAttr() + '>' + Q.GROUPS.map(function (name) {
         var on = picked.indexOf(name) >= 0;
-        return '<button type="button" class="gs" data-award="' + name + '" aria-pressed="' + on + '">' +
-          '<div class="g">' + name + '</div><div class="s">' + (on ? '+100' : '0') + '</div></button>';
+        return '<button type="button" class="gs" data-award="' + esc(name) + '" aria-pressed="' + on + '">' +
+          '<div class="g">' + esc(name) + '</div><div class="s">' + (on ? '+100' : '0') + '</div></button>';
       }).join('') + '</div>';
   }
 
@@ -663,7 +676,7 @@
     ps.forEach(function (p) { mem[p.group] = (mem[p.group] || 0) + 1; });
     var html = Q.GROUPS.filter(function (name) { return mem[name]; }).map(function (name) {
       var a = by[name] || 0;
-      return '<span class="tc' + (a >= mem[name] ? ' all' : a ? ' some' : '') + '">' + name + ' <b>' + a + '/' + mem[name] + '</b></span>';
+      return '<span class="tc' + (a >= mem[name] ? ' all' : a ? ' some' : '') + '">' + esc(name) + ' <b>' + a + '/' + mem[name] + '</b></span>';
     }).join('');
     if (box.getAttribute('data-html') !== html) { box.innerHTML = html; box.setAttribute('data-html', html); }
   }
@@ -755,7 +768,7 @@
       var b = pv && pv.by[r.name];
       var moved = !!(b && pv.any);
       return boardRow({
-        first: i === 0, rank: r.rank, name: r.name, sub: r.members + (r.members === 1 ? ' player' : ' players'), anim: !!pv,
+        first: i === 0, rank: r.rank, name: esc(r.name), sub: r.members + (r.members === 1 ? ' player' : ' players'), anim: !!pv,
         to: r.score, from: b ? b.total : r.score, gain: b ? b.gain : 0,
         prevKey: (b ? b.rank : 0) * 1000 + i, prevRank: moved ? b.rank : 0, move: moved ? b.rank - r.rank : 0
       });
@@ -764,14 +777,17 @@
 
   function viewLeaderboard(g) {
     var s = standings();
+    // With many teams the board shows the top eight; everyone is on the final podium screen.
+    var cut = s.ranked.length > 8;
+    var shown = cut ? s.ranked.slice(0, 8) : s.ranked;
     return '<section class="is-board">' +
       '<p class="kicker">After question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</p>' +
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
       '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false, true) + '</div>' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">Teams</p>' + (H.hideScores
+      '  <div><p class="kicker" style="margin-bottom:1.4vh">' + (cut ? 'Top 8 teams' : 'Teams') + '</p>' + (H.hideScores
         ? '<p class="scores-hidden">Team scores are <b>top secret</b> until the final results.</p>'
-        : groupRows(s.ranked, false, prevTeams(s, g))) + '</div>' +
+        : groupRows(shown, shown.length > 5, prevTeams(s, g))) + '</div>' +
       '</div></section>';
   }
 
@@ -859,16 +875,16 @@
     var r = s.ranked;
     function pod(row, place) {
       if (!row) return '<div></div>';
-      return '<div class="pod p' + place + '"><div class="nm">' + row.name + '</div>' +
+      return '<div class="pod p' + place + '"><div class="nm">' + esc(row.name) + '</div>' +
         '<div class="sc">' + Q.num(row.score) + ' points</div><div class="block">' + row.rank + '</div></div>';
     }
     var winners = r.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
     return '<section class="is-final"><p class="kicker">Final results</p>' +
       '<h1 class="h-big win-title">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
-      '<span class="grad-text">' + winners.join(' and ') + '</span></h1>' +
+      '<span class="grad-text">' + esc(winners.join(' and ')) + '</span></h1>' +
       '<div class="podium">' + pod(r[1], 2) + pod(r[0], 1) + pod(r[2], 3) + '</div>' +
-      '<div class="rest">' + r.slice(3).map(function (x) {
-        return '<div class="lrow"><span class="r">' + x.rank + '</span><span class="nm">' + x.name + '</span><span class="sc">' + Q.num(x.score) + '</span></div>';
+      '<div class="rest' + (r.length > 6 ? ' dense' : '') + '">' + r.slice(3).map(function (x) {
+        return '<div class="lrow"><span class="r">' + x.rank + '</span><span class="nm">' + esc(x.name) + '</span><span class="sc">' + Q.num(x.score) + '</span></div>';
       }).join('') + '</div></section>';
   }
 
@@ -986,6 +1002,8 @@
     else if (g.status === 'leaderboard') html = viewLeaderboard(g);
     else html = viewFinal();
 
+    var ev = $('eventName');
+    if (ev.textContent !== Q.EVENT) ev.textContent = Q.EVENT;
     var key = screenKey(g);
     var fresh = key !== H.lastKey;
     var loud = fresh && H.announceReady;
@@ -1059,6 +1077,7 @@
     $('manageBtn').hidden = s !== 'lobby';
     $('manageBtn').setAttribute('aria-pressed', String(H.manage));
     $('questionsBtn').hidden = s !== 'lobby' || cardOn(); // the quiz can only be changed before it starts
+    $('setupBtn').hidden = s !== 'lobby' || cardOn();
     $('scoresBtn').setAttribute('aria-pressed', String(H.hideScores));
     $('scoresBtn').textContent = H.hideScores ? 'Team scores hidden' : 'Team scores shown';
     $('soundBtn').setAttribute('aria-pressed', String(sfx.on()));
@@ -1329,6 +1348,141 @@
   $('pkSearch').addEventListener('input', function (e) { P.search = e.target.value; pkRender(); });
   $('pkAnswers').addEventListener('change', function (e) { P.answers = e.target.checked; pkRender(); });
 
+  // ---------------------------------------------------------------- setup: event name and teams
+  // Saved on the game row, so the big screen and every phone show the same
+  // event name and the same list of teams. Lobby only.
+  var S = { open: false, event: '', teams: [], saved: '', loading: false, msg: '', armClose: 0 };
+
+  function suClean(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+  function suSnapshot() {
+    return JSON.stringify([suClean(S.event), S.teams.map(suClean).filter(Boolean)]);
+  }
+  function suMembers() {
+    var m = {};
+    players().forEach(function (p) { m[p.group] = (m[p.group] || 0) + 1; });
+    return m;
+  }
+
+  function openSetup() {
+    var g = game();
+    if (!g || g.status !== 'lobby') { toast('The event name and teams can only be changed in the lobby.'); return; }
+    if (cardOn()) { toast('Turn card mode off to change the setup.'); return; }
+    S.open = true; S.loading = false; S.msg = ''; S.armClose = 0;
+    S.event = Q.EVENT;
+    S.teams = Q.GROUPS.slice();
+    S.saved = suSnapshot();
+    $('setup').hidden = false;
+    $('suEvent').value = S.event;
+    suRenderTeams();
+    suSync();
+    $('suEvent').focus();
+  }
+
+  function closeSetup(force) {
+    if (!S.open) return;
+    if (!force && suSnapshot() !== S.saved && !(S.armClose > Date.now())) {
+      S.armClose = Date.now() + 4000;
+      suSync();
+      setTimeout(suSync, 4100);
+      return;
+    }
+    S.open = false; S.armClose = 0;
+    $('setup').hidden = true;
+  }
+
+  // The team inputs are only rebuilt when a team is added or removed, so typing never loses focus.
+  function suRenderTeams() {
+    var mem = suMembers();
+    $('suTeams').innerHTML = S.teams.map(function (t, i) {
+      var n = mem[t] || 0;
+      return '<div class="su-team"><span class="n">' + (i + 1) + '</span>' +
+        '<input data-i="' + i + '" maxlength="20" autocomplete="off" spellcheck="false" aria-label="Team ' + (i + 1) + '" value="' + esc(t) + '"' +
+        (n ? ' readonly title="This team already has players"' : '') + '>' +
+        (n ? '<span class="tag">' + n + (n === 1 ? ' player' : ' players') + '</span>'
+           : '<button type="button" data-su="remove" data-i="' + i + '" aria-label="Remove team ' + (i + 1) + '">&#215;</button>') +
+        '</div>';
+    }).join('');
+  }
+
+  function suSync() {
+    if (!S.open) return;
+    var names = S.teams.map(suClean).filter(Boolean);
+    var armed = S.armClose > Date.now();
+    $('suClose').textContent = armed ? 'Close without saving?' : 'Close';
+    $('suClose').className = 'pk-btn' + (armed ? ' arm' : '');
+    $('suCount').textContent = String(names.length);
+    $('suAdd').disabled = S.teams.length >= 20;
+    Array.prototype.forEach.call(document.querySelectorAll('#suTeams [data-su="remove"]'), function (b) {
+      b.disabled = S.teams.length <= 2;
+    });
+    $('suMsg').textContent = S.msg;
+    var dirty = suSnapshot() !== S.saved;
+    $('suSave').disabled = S.loading || !dirty;
+    $('suSave').textContent = S.loading ? 'Saving...' : dirty ? 'Save' : 'Saved';
+  }
+
+  function suSave() {
+    if (S.loading) return;
+    var ev = suClean(S.event), names = S.teams.map(suClean).filter(Boolean), seen = {}, dup = false;
+    names.forEach(function (n) { var k = n.toLowerCase(); if (seen[k]) dup = true; seen[k] = 1; });
+    S.msg = !ev ? 'Give the event a name.'
+      : names.length < 2 ? 'Add at least two teams.'
+      : names.length > 20 ? 'Twenty teams is the most.'
+      : dup ? 'Two teams have the same name.' : '';
+    if (S.msg) return suSync();
+    S.loading = true;
+    suSync();
+    call('host_set_setup', { p_event: ev, p_teams: names }).then(function (r) {
+      S.loading = false;
+      var note = r.data && r.data.note;
+      if (r.network) S.msg = 'No connection. Nothing was saved.';
+      else if (note === 'setup_saved') {
+        toast('Saved. ' + names.length + ' teams.');
+        closeSetup(true);
+        H.seen = null;
+        render();
+        return;
+      }
+      else if (note === 'team_in_use') S.msg = 'A team with players in it cannot be removed or renamed. Remove those players first (Players button), or reset the game.';
+      else if (note === 'bad_teams') S.msg = 'Team names must all be different, 20 characters or fewer, with no < > or " in them.';
+      else if (note === 'bad_team_count') S.msg = 'Use between 2 and 20 teams.';
+      else if (note === 'bad_event') S.msg = 'The event name must be 1 to 40 characters.';
+      else if (note === 'not_in_lobby') S.msg = 'The quiz has already started. Reset the game to change the setup.';
+      else if (r.error && /find the function|does not exist/i.test(r.error)) S.msg = 'Setup is not switched on in Supabase yet. Run migrations/editable_setup.sql in the SQL editor.';
+      else S.msg = 'Could not save' + (r.error ? ': ' + r.error : '.');
+      suSync();
+    });
+  }
+
+  $('setup').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-su]');
+    if (!b || b.disabled) return;
+    var a = b.getAttribute('data-su');
+    if (a === 'close') return closeSetup();
+    if (a === 'save') return suSave();
+    S.msg = ''; S.armClose = 0;
+    if (a === 'add' && S.teams.length < 20) {
+      S.teams.push('');
+      suRenderTeams();
+      var inputs = document.querySelectorAll('#suTeams input');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    } else if (a === 'remove' && S.teams.length > 2) {
+      S.teams.splice(Number(b.getAttribute('data-i')), 1);
+      suRenderTeams();
+    }
+    suSync();
+  });
+  $('setup').addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.id === 'suEvent') S.event = t.value;
+    else if (t.hasAttribute('data-i')) S.teams[Number(t.getAttribute('data-i'))] = t.value;
+    S.msg = ''; S.armClose = 0;
+    suSync();
+  });
+  $('setup').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); suSave(); }
+  });
+
   // ---------------------------------------------------------------- PIN gate
   function sha(text) {
     try {
@@ -1434,6 +1588,7 @@
     else if (a === 'reset') reset();
     else if (a === 'manage') { H.manage = !H.manage; render(); }
     else if (a === 'questions') openPicker();
+    else if (a === 'setup') openSetup();
     else if (a === 'sound') {
       sfx.set(!sfx.on());
       if (sfx.on()) sfx.join();
@@ -1487,6 +1642,7 @@
   document.addEventListener('keydown', function () { sfx.unlock(); }, true);
   document.addEventListener('keydown', function (e) {
     if (P.open) { if (e.key === 'Escape') closePicker(); return; }
+    if (S.open) { if (e.key === 'Escape') closeSetup(); return; }
     if (!H.unlocked || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     var t = e.target;
     if (t && ((t.tagName === 'INPUT' && t.type !== 'checkbox') || t.tagName === 'TEXTAREA')) return;
