@@ -42,12 +42,52 @@
   <button type="button" data-act="end" id="endBtn">End quiz</button>
   <button type="button" data-act="reset" id="resetBtn">Reset game</button>
   <span class="sep"></span>
+  <button type="button" data-act="questions" id="questionsBtn">Questions</button>
   <button type="button" data-act="manage" id="manageBtn" aria-pressed="false">Players</button>
   <button type="button" data-act="scores" id="scoresBtn" aria-pressed="false">Team scores shown</button>
+  <button type="button" data-act="sound" id="soundBtn" aria-pressed="true">Sound on</button>
+  <button type="button" data-act="voice" id="voiceBtn" aria-pressed="true">Voice on</button>
   <label class="switch"><input type="checkbox" id="cardToggle"><span>Card mode</span></label>
   <button type="button" data-act="fullscreen">Full screen</button>
   <span class="keys">Space next · Left back</span>
 </footer>
+
+<div class="picker" id="picker" hidden>
+  <div class="pk-panel" role="dialog" aria-modal="true" aria-labelledby="pkTitle">
+    <header class="pk-head">
+      <div>
+        <p>Question bank</p>
+        <h2 id="pkTitle">Pick the questions for this quiz</h2>
+      </div>
+      <div class="pk-head-actions">
+        <label class="pk-check" title="Keep this off while the projector is showing this screen">
+          <input type="checkbox" id="pkAnswers"> Show answers</label>
+        <button type="button" class="pk-btn" data-pk="close" id="pkClose">Close</button>
+      </div>
+    </header>
+    <div class="pk-body">
+      <section class="pk-bank">
+        <div class="pk-tools">
+          <input id="pkSearch" type="search" placeholder="Search the bank" autocomplete="off" aria-label="Search the bank">
+          <div class="pk-filters" id="pkFilters"></div>
+        </div>
+        <div class="pk-list" id="pkList"></div>
+      </section>
+      <aside class="pk-quiz">
+        <div class="pk-quiz-head">
+          <h3>Your quiz<span id="pkCount"></span></h3>
+          <div>
+            <button type="button" class="pk-btn" data-pk="shuffle">Shuffle</button>
+            <button type="button" class="pk-btn" data-pk="clear">Clear</button>
+          </div>
+        </div>
+        <ol class="pk-chosen" id="pkChosen"></ol>
+        <p class="pk-msg" id="pkMsg" role="status"></p>
+        <button type="button" class="primary" data-pk="save" id="pkSave">Save quiz</button>
+      </aside>
+    </div>
+  </div>
+</div>
 
 <div class="gate" id="gate">
   <form class="gate-card" id="gateForm" autocomplete="off">

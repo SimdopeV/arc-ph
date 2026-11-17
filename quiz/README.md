@@ -18,6 +18,8 @@ Plain HTML, CSS and JavaScript. No build step. Supabase does the database and re
 | `sw.js` | Lets the host page reload offline for card mode |
 | `supabase.sql` | Tables, security and functions (no questions) |
 | `questions.local.sql` | The 12 questions and answers. Git-ignored, so it never reaches GitHub. Keep a private copy. |
+| `bank.local.sql` | The question bank you pick from (the 12 meetup questions plus the Arc 101 set). Git-ignored too. Keep a private copy. |
+| `migrations/` | One-off SQL for a database that was set up before a feature existed |
 | `loadtest/` | 100-player load test (Node) |
 
 ## 1. Create the Supabase project
@@ -35,6 +37,14 @@ Plain HTML, CSS and JavaScript. No build step. Supabase does the database and re
 Running `supabase.sql` again wipes the game (players, answers, questions and the PIN), so run `questions.local.sql` and set the PIN again afterwards. Do that before the event, never during. Running `questions.local.sql` again on its own is safe: it only replaces the questions.
 
 If you forget the questions file, the host page says "No questions loaded" and the quiz will not start.
+
+### The question bank
+
+3. Start another new query, paste all of `bank.local.sql` and click **Run**. It fills the bank and should print `bank_questions: 45`. Running it again is safe: it only replaces the bank.
+
+If the database was created before the bank existed, run `migrations/question_bank.sql` once first. It adds the bank without touching players, scores or the PIN.
+
+To choose the questions for a quiz: on the host page, in the lobby, press **Questions**. Filter by module or search, press **+** on each question you want, put them in order with the arrows (or **Shuffle**), then **Save quiz**. Click a question to see its options. **Show answers** highlights the right answer, so keep it unticked while the projector is showing your screen. A tag says whether each answer has been checked. The quiz can only be changed in the lobby, before it starts.
 
 ## 3. Set the host PIN
 
@@ -73,7 +83,9 @@ Commit and push to `main`. GitHub Pages serves the pages a minute later.
 | Space or Enter (or a clicker's next button) | Next step: Start, Reveal, Leaderboard, Next question, Final results, Top players |
 | Left arrow (or a clicker's back button) | Back |
 
-Buttons at the bottom of the screen (they brighten when the mouse is over them): Back, Pause, the next step, End quiz, Reset game, Players, Card mode, Full screen. End quiz and Reset game need two clicks.
+Buttons at the bottom of the screen (they brighten when the mouse is over them): Back, Pause, the next step, End quiz, Reset game, Questions, Players, Team scores, Sound, Voice, Card mode, Full screen. End quiz and Reset game need two clicks.
+
+**Sound** plays the effects (join blip, heartbeat for the last five seconds, reveal chime, drumroll and fanfare). **Voice** makes the browser read out questions, answers and winners. Both are on by default and are made in the browser, so plug the laptop into the room speakers. The browser only allows sound after you have clicked or pressed a key on the page once.
 
 How a question runs: 20 seconds on the ring timer, "Answers in: 63 / 88" below it. It reveals by itself one second after time runs out, or when you press Space. Back during an open question cancels it (and deletes its answers, after a second press). A reveal cannot be undone.
 

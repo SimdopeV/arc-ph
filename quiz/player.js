@@ -4,7 +4,9 @@
   var $screen = document.getElementById('screen');
   var $banner = document.getElementById('banner');
   var $who = document.getElementById('who');
-  var KEY = 'arcq_player_' + (Q.cfg.GAME_CODE || 'ARCPH');
+  var CODE = Q.cfg.GAME_CODE || 'ARCPH';
+  var KEY = 'arcq_player_' + CODE;
+  var HKEY = 'arcq_hist_' + CODE;
 
   var st = {
     playerId: Q.local.get(KEY),
@@ -19,17 +21,43 @@
     channel: null, chanStatus: null, everSubscribed: false, channelAt: 0,
     netOk: true,
     joinGroup: null, joinError: '', joining: false,
-    note: ''
+    note: '',
+    hist: Q.local.getJSON(HKEY), // { pid, ok: {idx: 1|0}, rank: {idx: n} } for streaks and rank moves
+    shownRes: null, shownFinal: false, lastBeat: null
   };
   var screenKey = '';
+  var screenBase = '';
   var syncTimer = null;
   var syncing = false;
+  var calm = false;
+  try { calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
   function letter(i) { return Q.LETTERS[i] || '?'; }
   function opts(g) {
     var o = g && g.options;
     if (typeof o === 'string') { try { o = JSON.parse(o); } catch (e) { o = null; } }
     return Array.isArray(o) ? o : [];
+  }
+
+  // Phone buzz. Android only (iPhones ignore it), and only after the player has tapped something.
+  function buzz(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {} }
+
+  // ---------------------------------------------------------------- streaks and rank moves
+  function hist() {
+    if (!st.hist || st.hist.pid !== st.playerId) st.hist = { pid: st.playerId, ok: {}, rank: {} };
+    return st.hist;
+  }
+  function noteResult(res, cardMode) {
+    if (!res || cardMode) return;
+    var h = hist(), i = res.question_idx;
+    h.ok[i] = res.answered && res.is_correct ? 1 : 0;
+    if (res.rank) h.rank[i] = res.rank;
+    Q.local.setJSON(HKEY, h);
+  }
+  function streak(idx) {
+    var h = hist(), n = 0;
+    for (var i = idx; i >= 0 && h.ok[i] === 1; i--) n++;
+    return n;
   }
 
   // ---------------------------------------------------------------- server
@@ -57,6 +85,7 @@
       }
       if (d.total != null) st.total = d.total;
       st.result = d.result || st.result;
+      if (d.result && st.game) noteResult(d.result, st.game.card_mode);
       st.final = d.final || null;
       ensureChannel(st.game.id);
       render(); updateBanner();
@@ -77,6 +106,7 @@
     if (row.current_index !== st.choiceIdx) {
       st.choice = null; st.choiceIdx = null; st.lock = null; st.sendError = '';
     }
+    if (row.status === 'lobby') { st.hist = null; Q.local.del(HKEY); st.shownRes = null; st.shownFinal = false; }
     if (fromSync) return true;
     var s = row.status;
     var idx = row.current_index;
@@ -150,6 +180,7 @@
       st.note = '';
       Q.local.set(KEY, st.playerId);
       st.player = { id: r.data.player_id, name: r.data.name, group: r.data.group };
+      buzz([20, 40, 40]);
       sync();
     });
   }
@@ -160,7 +191,10 @@
     var idx = g.current_index;
     st.choice = i; st.choiceIdx = idx; st.lock = 'sending'; st.sendError = '';
     wakeLock();
+    buzz(14);
     render();
+    var picked = document.querySelector('.answer.picked');
+    if (picked) picked.classList.add('thump');
     var tries = 0;
     (function send() {
       tries++;
@@ -188,6 +222,76 @@
     } catch (e) {}
   }
 
+  // ---------------------------------------------------------------- little effects
+  // Confetti from a point on the phone screen. Canvas, no library, gone in two seconds.
+  function burst(n, originY) {
+    if (calm) return;
+    try {
+      var COLORS = ['#F3966F', '#942753', '#F3CA94', '#ffffff', '#3ccf91', '#c9a6ff'];
+      var c = document.createElement('canvas');
+      c.className = 'burst'; c.setAttribute('aria-hidden', 'true');
+      var dpr = Math.min(window.devicePixelRatio || 1, 2), W = window.innerWidth, Ht = window.innerHeight;
+      c.width = W * dpr; c.height = Ht * dpr;
+      var ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      document.body.appendChild(c);
+      var parts = [];
+      for (var i = 0; i < n; i++) {
+        var a = -Math.PI / 2 + (Math.random() - 0.5) * 2.6, v = 5 + Math.random() * 9, s = 5 + Math.random() * 6;
+        parts.push({ x: W / 2, y: originY, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2, w: s, h: s * 0.55,
+          r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.4, c: COLORS[i % COLORS.length] });
+      }
+      var start = performance.now(), last = start;
+      (function frame(now) {
+        var dt = Math.min((now - last) / 16.7, 3); last = now;
+        ctx.clearRect(0, 0, W, Ht);
+        var alpha = Math.max(0, 1 - (now - start - 1300) / 600);
+        ctx.globalAlpha = alpha;
+        parts.forEach(function (p) {
+          p.vx *= Math.pow(0.985, dt); p.vy = p.vy * Math.pow(0.985, dt) + 0.32 * dt;
+          p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt;
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c;
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); ctx.restore();
+        });
+        if (now - start < 1900) requestAnimationFrame(frame);
+        else if (c.parentNode) c.parentNode.removeChild(c);
+      })(start);
+    } catch (e) {}
+  }
+
+  // Count a number up from zero (the page already shows the final number, so a redraw is safe).
+  function countTo(id, to, ms) {
+    var el = document.getElementById(id);
+    if (!el || calm || !to) return;
+    var start = performance.now();
+    (function step(now) {
+      var el2 = document.getElementById(id);
+      if (!el2) return;
+      var t = Math.min(1, (now - start) / ms), e = 1 - Math.pow(1 - t, 3);
+      el2.textContent = Q.num(to * e);
+      if (t < 1) requestAnimationFrame(step);
+    })(start);
+  }
+
+  var ICON = {
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>'
+  };
+
+  // A line under each result. Picked by question number so it stays put when the screen redraws.
+  var BANTER = {
+    good: ['Onchain and on point.', 'Faster than finality.', 'Certified builder behaviour.', 'That one settled instantly.',
+      'Clean. Like a well-tested contract.', 'Deployed and verified.'],
+    bad: ['That one reverted.', 'Out of gas on that one.', 'Shake it off. Next block.', 'Even testnets have bad days.',
+      'Confidence: mainnet. Accuracy: testnet.'],
+    none: ['Transaction timed out.', 'Thumbs still in the mempool?', 'No answer, no points. Tap faster.']
+  };
+  function banter(kind, idx) {
+    var list = BANTER[kind];
+    var name = (st.player && st.player.name) || '';
+    return Q.esc(list[(idx + name.length) % list.length]);
+  }
+
   // ---------------------------------------------------------------- views
   function keyFor() {
     if (!Q.configured) return 'nocfg';
@@ -211,6 +315,15 @@
     return 'loading';
   }
 
+  // Screens that are the same moment for the player share a base, so the
+  // entrance animation plays once per moment and not on every small redraw.
+  function baseOf(key) {
+    var p = key.split(':'), k = p[0];
+    if (k === 'open' || k === 'sending' || k === 'locked' || k === 'late' || k === 'card') return 'q:' + p[1];
+    if (k === 'res') return 'res:' + p[1];
+    return k;
+  }
+
   function render() {
     $who.textContent = st.player ? st.player.name + ' · ' + st.player.group : '';
     var key = keyFor();
@@ -222,6 +335,9 @@
       open: viewQuestion, sending: viewQuestion, locked: viewQuestion, late: viewQuestion, card: viewQuestion,
       res: viewResult, final: viewFinal
     }[kind]();
+    var base = baseOf(key);
+    $screen.classList.toggle('enter', base !== screenBase);
+    screenBase = base;
     $screen.innerHTML = html;
     bind(kind);
     tick();
@@ -236,9 +352,10 @@
     var groups = Q.GROUPS.map(function (g) {
       return '<button type="button" class="group-btn" data-group="' + g + '" aria-pressed="' + (st.joinGroup === g) + '">' + g + '</button>';
     }).join('');
+    var count = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'][Q.GROUPS.length] || String(Q.GROUPS.length);
     return '' +
       '<h1>Join the <span class="grad-text">live quiz</span></h1>' +
-      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. Four teams, twelve questions.</p>') +
+      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">Ogbomoso Community Meetup. ' + count + ' teams, one winner.</p>') +
       '<form id="joinForm" class="screen" novalidate autocomplete="off">' +
       '  <div class="field"><p class="label"><label for="name">Your name</label></p>' +
       '    <input id="name" name="name" maxlength="20" enterkeyhint="done" autocapitalize="words" spellcheck="false" required>' +
@@ -250,11 +367,13 @@
   }
 
   function viewLobby() {
-    return '<div class="card big-wait">' +
+    return '<div class="waiting">' +
+      '<div class="pulse"><i></i><i></i><i></i><b>' + ICON.check + '</b></div>' +
       '<h1>You\'re in, <span class="name">' + Q.esc(st.player.name) + '</span>.</h1>' +
-      '<p class="lede" style="margin-top:10px">Team ' + Q.esc(st.player.group) + '. Watch the big screen.</p>' +
+      '<p class="lede">Team ' + Q.esc(st.player.group) + '. Eyes on the big screen.</p>' +
+      '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
       '</div>' +
-      '<p class="lede">The first question will show up here. Keep this page open.</p>';
+      '<p class="lede center">The first question lands here. Keep this page open.</p>';
   }
 
   function viewQuestion() {
@@ -262,7 +381,7 @@
     var o = opts(g);
     var locked = st.choiceIdx === idx && (st.lock === 'locked' || st.lock === 'sending');
     var late = !locked && (st.lock === 'late' || Q.remaining(g) <= 0);
-    var cls = g.card_mode ? 'static' : (locked || late ? 'locked' : '');
+    var cls = (g.card_mode ? 'static' : (locked || late ? 'locked' : '')) + (o.length === 2 ? ' two' : '');
     var buttons = o.map(function (text, i) {
       var picked = locked && st.choice === i ? ' picked' : '';
       var dis = g.card_mode || locked || late ? ' disabled' : '';
@@ -292,39 +411,65 @@
       (g.explanation ? '<p class="explain">' + Q.esc(g.explanation) + '</p>' : '');
   }
 
+  // "You're 3rd of 28", with how far you moved since the last question.
+  function rankLine(res, idx) {
+    if (!res || !res.rank || !res.players) return '';
+    var prev = hist().rank[idx - 1], mv = '';
+    if (prev && prev > res.rank) mv = '<span class="mv up">&#9650; ' + (prev - res.rank) + '</span>';
+    else if (prev && prev < res.rank) mv = '<span class="mv">&#9660; ' + (res.rank - prev) + '</span>';
+    return '<div class="rankline"><span>You\'re <b>' + Q.ordinal(res.rank) + '</b> of ' + res.players + '</span>' + mv + '</div>';
+  }
+
   function viewResult() {
     var g = st.game, idx = g.current_index;
     var res = st.result && st.result.question_idx === idx ? st.result : null;
-    var top;
+    var top, rank = '';
     if (g.card_mode && !(res && res.answered)) {
       top = '<div class="card result"><p class="verdict">Card round</p><p class="total">Your total ' + Q.num(st.total) + '</p></div>';
     } else if (!res) {
-      top = '<div class="card result"><p class="lede">Checking your answer...</p></div>';
+      top = '<div class="card result"><p class="lede">Checking your answer<span class="dots" style="margin-left:8px"><i></i><i></i><i></i></span></p></div>';
     } else if (!res.answered) {
-      top = '<div class="card result bad"><p class="verdict">No answer</p><p class="points">+0 points</p>' +
+      top = '<div class="card result bad"><div class="mark">' + ICON.clock + '</div><p class="verdict">No answer</p>' +
+        '<p class="banter">' + banter('none', idx) + '</p><p class="points">+0 points</p>' +
         '<p class="total">Total ' + Q.num(st.total) + '</p></div>';
+      rank = rankLine(res, idx);
     } else {
+      var chips = '';
+      if (res.is_correct) {
+        var run = streak(idx);
+        if (run >= 2) chips += '<span class="chip-s fire">' + run + ' in a row</span>';
+        if (res.points >= 900) chips += '<span class="chip-s">Lightning fast</span>';
+        else if (res.points >= 800) chips += '<span class="chip-s">Quick</span>';
+      }
       top = '<div class="card result ' + (res.is_correct ? 'good' : 'bad') + '">' +
+        '<div class="mark">' + (res.is_correct ? ICON.check : ICON.cross) + '</div>' +
         '<p class="verdict">' + (res.is_correct ? 'Correct' : 'Not quite') + '</p>' +
-        '<p class="points">+' + Q.num(res.points) + ' points</p>' +
+        '<p class="banter">' + banter(res.is_correct ? 'good' : 'bad', idx) + '</p>' +
+        '<p class="points">+<span id="pts">' + Q.num(res.points) + '</span> points</p>' +
+        '<div class="chips">' + chips + '</div>' +
         '<p class="total">Total ' + Q.num(st.total) + '</p></div>';
+      rank = rankLine(res, idx);
     }
     var foot = g.status === 'leaderboard' ? '<p class="status-line">Leaderboard is on the big screen.</p>' : '';
-    return '<p class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions + '</p>' + top + revealedBox(g) + foot;
+    return '<p class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions + '</p>' + top + rank + revealedBox(g) + foot;
   }
 
   function viewFinal() {
     var f = st.final;
     if (!f) return '<h1>That\'s a wrap</h1><p class="lede">Loading your results...</p>';
+    var top = f.rank <= 3;
+    var line = f.group_rank === 1 ? 'Your team won. Take a bow.'
+      : top ? 'Top three. Certified builder.' : 'Thanks for playing. Now go build something on Arc Studio.';
     return '' +
       '<h1>That\'s a <span class="grad-text">wrap</span></h1>' +
-      '<div class="card"><p class="label">Your score</p><p class="final-num">' + Q.num(st.total) + '</p></div>' +
+      '<div class="card final-card' + (top ? ' top' : '') + '"><p class="label">Your rank</p>' +
+      '<p class="final-rank">' + Q.ordinal(f.rank) + '<small>of ' + f.players + '</small></p>' +
+      '<p class="final-num"><span id="fnum">' + Q.num(st.total) + '</span><small>points</small></p></div>' +
       '<div class="card">' +
-      '<div class="final-row" style="border-top:0"><span>Your rank</span><b>' + Q.ordinal(f.rank) + ' of ' + f.players + '</b></div>' +
-      '<div class="final-row"><span>Team ' + Q.esc(st.player.group) + '</span><b>' + Q.ordinal(f.group_rank) + ' of ' + f.groups + '</b></div>' +
+      '<div class="final-row" style="border-top:0"><span>Team ' + Q.esc(st.player.group) + '</span><b>' + Q.ordinal(f.group_rank) + ' of ' + f.groups + '</b></div>' +
       '<div class="final-row"><span>Team score</span><b>' + Q.num(f.group_score) + '</b></div>' +
       '</div>' +
-      '<p class="lede">Thanks for playing. Now go build something on Arc Studio.</p>';
+      '<p class="lede center">' + line + '</p>';
   }
 
   // ---------------------------------------------------------------- events
@@ -336,6 +481,37 @@
   function updateJoinButton() {
     var b = document.getElementById('joinBtn');
     if (b) { b.disabled = st.joining; b.textContent = st.joining ? 'Joining...' : 'Join'; }
+  }
+
+  // The result has just landed for this question: play it once (pop, count, buzz, confetti).
+  function celebrateResult() {
+    var g = st.game, idx = g.current_index;
+    var res = st.result && st.result.question_idx === idx ? st.result : null;
+    if (!res || st.shownRes === idx) return;
+    st.shownRes = idx;
+    var card = document.querySelector('.result');
+    if (card) card.classList.add('show');
+    if (g.card_mode && !res.answered) return;
+    if (res.answered && res.is_correct) {
+      buzz([30, 50, 30, 50, 70]);
+      var r = card ? card.getBoundingClientRect() : null;
+      burst(streak(idx) >= 3 ? 100 : 60, r ? r.top + 60 : window.innerHeight * 0.3);
+      countTo('pts', res.points, 900);
+    } else {
+      buzz(res.answered ? 200 : [60, 80, 60]);
+    }
+  }
+
+  function celebrateFinal() {
+    var f = st.final;
+    if (!f || st.shownFinal) return;
+    st.shownFinal = true;
+    countTo('fnum', st.total, 1400);
+    if (f.rank <= 3 || f.group_rank === 1) {
+      buzz([40, 60, 40, 60, 120]);
+      burst(120, window.innerHeight * 0.32);
+      setTimeout(function () { burst(80, window.innerHeight * 0.32); }, 600);
+    }
   }
 
   function bind(kind) {
@@ -351,6 +527,7 @@
           Array.prototype.forEach.call(document.querySelectorAll('.group-btn'), function (x) {
             x.setAttribute('aria-pressed', String(x === b));
           });
+          buzz(10);
           showJoinError('');
         });
       });
@@ -360,21 +537,30 @@
         b.addEventListener('click', function () { answer(Number(b.getAttribute('data-choice'))); });
       });
     }
+    if (kind === 'res') celebrateResult();
+    if (kind === 'final') celebrateFinal();
   }
 
   // Countdown runs locally from started_at plus the server clock offset.
   function tick() {
     var g = st.game;
     var t = document.getElementById('timer');
-    if (!t || !g || g.status !== 'question') return;
+    if (!t || !g || g.status !== 'question') { document.body.classList.remove('hurry'); return; }
     var left = Q.remaining(g);
     var shown = Math.max(0, Math.ceil(left));
+    var mine = st.choiceIdx === g.current_index && (st.lock === 'locked' || st.lock === 'sending');
+    // Last five seconds and no answer yet: the screen edge and the phone beat like a heart.
+    var hurry = !g.paused_at && !g.card_mode && !mine && shown > 0 && shown <= 5;
+    document.body.classList.toggle('hurry', hurry);
+    if (hurry && st.lastBeat !== g.current_index + ':' + shown) {
+      st.lastBeat = g.current_index + ':' + shown;
+      buzz(shown <= 2 ? [25, 90, 25] : 25);
+    }
     t.textContent = g.paused_at ? 'Paused' : String(shown);
-    t.className = 'timer' + (shown <= 5 ? ' low' : '');
+    t.className = 'timer' + (hurry ? ' low' : '');
     // Points still up for grabs: 500 + 500 x time left, the same formula the server scores with.
     var stake = document.getElementById('stake');
     if (stake) {
-      var mine = st.choiceIdx === g.current_index && (st.lock === 'locked' || st.lock === 'sending');
       var sHtml = '', sCls = 'stake';
       if (g.card_mode) sHtml = '';
       else if (mine) { sHtml = '<b>Locked in</b> fingers crossed'; sCls += ' locked'; }

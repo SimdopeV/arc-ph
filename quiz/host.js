@@ -9,7 +9,7 @@
   var K = {
     pin: 'arcq_pin', pinHash: 'arcq_pin_hash_' + CODE, view: 'arcq_host_view_' + CODE,
     qs: 'arcq_host_questions_' + CODE, card: 'arcq_host_card_' + CODE,
-    hideScores: 'arcq_hide_team_scores'
+    hideScores: 'arcq_hide_team_scores', sound: 'arcq_sound', voice: 'arcq_voice'
   };
 
   var H = {
@@ -25,6 +25,10 @@
     armed: {},
     autoRevealed: {},
     lastHtml: '',
+    lastKey: '',          // which screen is up: status, question number, final step
+    announceReady: false, // sounds and voice only after the first unlocked draw
+    seen: null,           // player ids already shown in the lobby
+    lastBeat: '', buzzed: -1,
     podiumShown: false,
     hideScores: Q.local.get(K.hideScores) === 'on', // team scores stay secret until the final results
     qr: null
@@ -340,6 +344,153 @@
     });
   }
 
+  // ---------------------------------------------------------------- sound
+  // Every sound is made in the browser (Web Audio), so there are no audio files
+  // to load and it works offline in card mode.
+  var sfx = (function () {
+    var on = Q.local.get(K.sound) !== 'off';
+    var ctx = null, master = null, nbuf = null;
+
+    function ac() {
+      if (!on) return null;
+      try {
+        if (!ctx) {
+          var C = window.AudioContext || window.webkitAudioContext;
+          if (!C) return null;
+          ctx = new C();
+          master = ctx.createGain();
+          master.gain.value = 0.6;
+          master.connect(ctx.destination);
+        }
+        if (ctx.state === 'suspended') ctx.resume();
+        return ctx.state === 'running' ? ctx : null;
+      } catch (e) { return null; }
+    }
+    function tone(freq, at, dur, type, vol, slideTo) {
+      var c = ac();
+      if (!c) return;
+      var o = c.createOscillator(), g = c.createGain(), t = c.currentTime + (at || 0);
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(freq, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol || 0.2, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+    function noise(at, dur, vol, from, to, q) {
+      var c = ac();
+      if (!c) return;
+      if (!nbuf) {
+        nbuf = c.createBuffer(1, c.sampleRate, c.sampleRate);
+        var d = nbuf.getChannelData(0);
+        for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      var src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(), t = c.currentTime + (at || 0);
+      src.buffer = nbuf; src.loop = true;
+      f.type = 'bandpass'; f.Q.value = q || 1;
+      f.frequency.setValueAtTime(from, t);
+      if (to) f.frequency.exponentialRampToValueAtTime(to, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.05, dur / 3));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f); f.connect(g); g.connect(master);
+      src.start(t); src.stop(t + dur + 0.05);
+    }
+
+    return {
+      on: function () { return on; },
+      set: function (v) { on = !!v; Q.local.set(K.sound, on ? 'on' : 'off'); if (on) ac(); },
+      unlock: function () { ac(); },
+      // someone joined
+      join: function () { tone(660, 0, 0.1, 'triangle', 0.16); tone(990, 0.08, 0.16, 'triangle', 0.16); },
+      // a new screen slides in
+      whoosh: function () { noise(0, 0.42, 0.22, 300, 2600, 1.2); },
+      // a quiet clock tick for seconds 10 to 6
+      tick: function () { tone(1200, 0, 0.04, 'square', 0.035); },
+      // heartbeat for the last five seconds: lub-dub, louder as time runs out
+      beat: function (left) {
+        var v = 0.5 + (5 - Math.max(1, Math.min(5, left))) * 0.09;
+        tone(150, 0, 0.16, 'triangle', v, 60);
+        tone(120, 0.2, 0.2, 'triangle', v * 0.75, 50);
+      },
+      // time's up
+      buzz: function () { tone(220, 0, 0.55, 'sawtooth', 0.16, 110); tone(110, 0, 0.55, 'square', 0.1, 55); },
+      // the right answer lights up
+      reveal: function () {
+        tone(523, 0, 0.16, 'triangle', 0.22); tone(659, 0.11, 0.16, 'triangle', 0.22);
+        tone(784, 0.22, 0.16, 'triangle', 0.22); tone(1047, 0.33, 0.5, 'triangle', 0.24);
+      },
+      // scores counting up: each tick a little higher
+      count: function (i) { tone(520 + Math.min(i, 16) * 45, 0, 0.05, 'square', 0.04); },
+      // before the winner: a roll that grows, then a hit
+      drumroll: function (dur) {
+        for (var t = 0; t < dur; t += 0.055) noise(t, 0.05, 0.05 + 0.22 * (t / dur), 220, 0, 0.7);
+        tone(90, dur, 0.5, 'triangle', 0.7, 45);
+        noise(dur, 0.9, 0.3, 5000, 1500, 0.5);
+      },
+      fanfare: function () {
+        [523, 659, 784, 1047].forEach(function (f, i) { tone(f, i * 0.13, 0.22, 'triangle', 0.24); });
+        [523, 659, 784, 1047, 1319].forEach(function (f) { tone(f, 0.56, 1.5, 'triangle', 0.13); });
+      }
+    };
+  })();
+
+  // ---------------------------------------------------------------- voice
+  // The browser's own speech voice reads out questions, answers and winners.
+  var voice = (function () {
+    var ok = 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance === 'function';
+    var on = Q.local.get(K.voice) !== 'off';
+    var chosen = null;
+
+    function choose() {
+      if (!ok) return;
+      var vs = window.speechSynthesis.getVoices().filter(function (v) { return /^en/i.test(v.lang || ''); });
+      var want = [/natural/i, /Google UK English Female/i, /Google US English/i, /aria|jenny|sonia|libby|samantha/i, /zira|hazel|susan/i];
+      chosen = null;
+      for (var i = 0; i < want.length && !chosen; i++) {
+        for (var j = 0; j < vs.length; j++) if (want[i].test(vs[j].name)) { chosen = vs[j]; break; }
+      }
+      if (!chosen) chosen = vs[0] || null;
+    }
+    if (ok) {
+      choose();
+      try { window.speechSynthesis.addEventListener('voiceschanged', choose); } catch (e) {}
+    }
+
+    function say(text, flush) {
+      if (!ok || !on || !text) return;
+      try {
+        if (flush) window.speechSynthesis.cancel();
+        var u = new window.SpeechSynthesisUtterance(String(text));
+        if (chosen) { u.voice = chosen; u.lang = chosen.lang; } else u.lang = 'en-GB';
+        u.rate = 1.03; u.pitch = 1.05; u.volume = 1;
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+
+    return {
+      ok: ok,
+      on: function () { return ok && on; },
+      set: function (v) {
+        on = !!v;
+        Q.local.set(K.voice, on ? 'on' : 'off');
+        if (!on && ok) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+      },
+      say: say,
+      // Greets new players, unless it is still busy talking.
+      welcome: function (list) {
+        if (!ok || !on || !list.length) return;
+        try { if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return; } catch (e) {}
+        var n = list.map(function (p) { return p.name || p.label; });
+        if (n.length === 1) say('Welcome, ' + n[0] + '!');
+        else if (n.length === 2) say('Welcome, ' + n[0] + ' and ' + n[1] + '!');
+        else say('Welcome, ' + n[0] + ', ' + n[1] + ' and ' + (n.length - 2) + (n.length === 3 ? ' other!' : ' others!'));
+      }
+    };
+  })();
+
   // ---------------------------------------------------------------- views
   function esc(s) { return Q.esc(s); }
 
@@ -360,12 +511,14 @@
   }
 
   function viewLobby() {
+    var g = game();
     var counts = {};
-    Q.GROUPS.forEach(function (g) { counts[g] = 0; });
+    Q.GROUPS.forEach(function (name) { counts[name] = 0; });
     var ps = players();
     ps.forEach(function (p) { counts[p.group] = (counts[p.group] || 0) + 1; });
-    var groups = Q.GROUPS.map(function (g) {
-      return '<div class="lg"><div class="n">' + counts[g] + '</div><div class="g">' + g + '</div></div>';
+    var groups = Q.GROUPS.map(function (name) {
+      return '<div class="lg' + (counts[name] ? ' has' : '') + '" data-g="' + name + '"><div class="n">' + counts[name] +
+        '</div><div class="g">' + name + '</div></div>';
     }).join('');
     var names;
     if (H.manage) {
@@ -377,18 +530,44 @@
         '<p class="kicker">Click a name twice to remove that player.</p>';
     } else {
       names = '<div class="names">' + ps.slice(-24).reverse().map(function (p) {
-        return '<span>' + esc(p.label) + '</span>';
+        return '<span data-id="' + p.id + '">' + esc(p.label) + '</span>';
       }).join('') + '</div>';
     }
     var shortUrl = PLAYER_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    var total = (g && g.total_questions) || 0;
     return '<section class="lobby">' +
       '<div class="qr-card">' + qrSvg() + '<div class="qr-url">' + esc(shortUrl) + '</div></div>' +
       '<div class="lobby-side">' +
-      '  <p class="kicker">Live quiz · 12 questions · 20 seconds each</p>' +
+      '  <p class="kicker">Live quiz · ' + total + (total === 1 ? ' question' : ' questions') + ' · ' + ((g && g.duration_s) || 20) + ' seconds each</p>' +
       '  <h1 class="h-big">Scan to <span class="grad-text">join</span></h1>' +
       '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
       '  <div class="lobby-groups">' + groups + '</div>' + names +
       '</div></section>';
+  }
+
+  // Runs after the lobby is drawn: new names pop in, their team's count bumps,
+  // a blip plays and the voice says hello.
+  function bump(el) {
+    if (!el) return;
+    el.classList.remove('bump');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('bump');
+  }
+  function patchLobby() {
+    var ps = players(), ids = {}, fresh = [];
+    ps.forEach(function (p) { ids[p.id] = 1; if (H.seen && !H.seen[p.id]) fresh.push(p); });
+    var first = !H.seen;
+    H.seen = ids;
+    if (first || !fresh.length) return;
+    var teams = {};
+    fresh.forEach(function (p) {
+      teams[p.group] = 1;
+      var el = stage.querySelector('.names span[data-id="' + p.id + '"]');
+      if (el) { el.classList.add('pop'); setTimeout(function () { el.classList.remove('pop'); }, 1800); }
+    });
+    Object.keys(teams).forEach(function (name) { bump(stage.querySelector('.lg[data-g="' + name + '"]')); });
+    bump(stage.querySelector('.lobby-total b'));
+    if (H.announceReady) { sfx.join(); voice.welcome(fresh); }
   }
 
   function ring() {
@@ -418,6 +597,14 @@
       }).join('') + '</div>';
   }
 
+  // Share of phone answers that were right, or null when there is nothing to show.
+  function pctRight(g) {
+    var dist = g.card_mode ? null : (H.view && H.view.distribution);
+    if (!dist || g.revealed_index == null) return null;
+    var total = dist.reduce(function (a, b) { return a + b; }, 0);
+    return total ? Math.round((dist[g.revealed_index] || 0) / total * 100) : null;
+  }
+
   function viewQuestion(g) {
     var o = opts(g);
     var revealed = g.status !== 'question';
@@ -434,62 +621,240 @@
         '<span class="txt">' + esc(t) + '</span></div>' + bar + '</div>';
     }).join('');
 
-    var foot;
+    var foot, chip = '';
     if (!revealed) {
+      // The live numbers are filled in by patchLive, so new answers never redraw the screen.
       var left = g.card_mode
         ? '<span>Card round. Teams, get your ' + Q.LETTERS.slice(0, o.length).join(', ') + ' cards ready.</span>'
-        : '<span>Answers in: <b>' + ((H.view && H.view.answers_in) || 0) + ' / ' + players().length + '</b></span>';
-      foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span></div>';
+        : '<span>Answers in: <b id="ansIn"></b></span>';
+      foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span>' +
+        (g.card_mode ? '' : '<div class="tcounts" id="tcounts"></div>') + '</div>';
     } else {
+      var right = pctRight(g);
+      if (right !== null) chip = '<span class="pct' + (right < 40 ? ' low' : '') + '">' + right + '% got it</span>';
       foot = (g.explanation ? '<p class="explain-big">' + esc(g.explanation) + '</p>' : '') +
         (g.card_mode && g.status === 'reveal' ? cardButtons(g) : (H.hideScores ? '' : groupStrip(true)));
     }
 
-    return '<section>' +
+    return '<section class="' + (revealed ? 'is-reveal' : 'is-question') + '">' +
       '<div class="q-top"><div>' +
       '  <div class="q-meta"><span class="num">Question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</span>' +
-      (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') + '</div>' +
+      (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') + chip + '</div>' +
       '  <h1 class="q-text">' + esc(g.question_text) + '</h1>' +
       '</div>' + (revealed ? '' : ring()) + '</div>' +
       '<div class="tiles">' + tiles + '</div>' + foot +
       '</section>';
   }
 
-  function playerRows(list, compact) {
+  // Who has answered, team by team, while the question is open.
+  function patchLive(g) {
+    if (!g || g.status !== 'question' || g.card_mode) return;
+    var ps = players();
+    var el = $('ansIn'), box = $('tcounts');
+    var txt = ((H.view && H.view.answers_in) || 0) + ' / ' + ps.length;
+    if (el && el.textContent !== txt) {
+      var had = el.textContent !== '';
+      el.textContent = txt;
+      if (had) bump(el);
+    }
+    var by = H.view && H.view.team_answers;
+    if (!box || !by) return;
+    var mem = {};
+    ps.forEach(function (p) { mem[p.group] = (mem[p.group] || 0) + 1; });
+    var html = Q.GROUPS.filter(function (name) { return mem[name]; }).map(function (name) {
+      var a = by[name] || 0;
+      return '<span class="tc' + (a >= mem[name] ? ' all' : a ? ' some' : '') + '">' + name + ' <b>' + a + '/' + mem[name] + '</b></span>';
+    }).join('');
+    if (box.getAttribute('data-html') !== html) { box.innerHTML = html; box.setAttribute('data-html', html); }
+  }
+
+  // The question types itself out when it first appears. Time based, so it
+  // lands in the same place even if the screen is redrawn half way.
+  var typer = { key: '', t0: 0, timer: 0 };
+  function typeStep() {
+    var g = game(), el = stage.querySelector('.is-question .q-text');
+    if (!el || !g || typer.key !== H.lastKey) { clearInterval(typer.timer); typer.timer = 0; return; }
+    var full = String(g.question_text || '');
+    var per = Math.min(28, 2400 / Math.max(full.length, 1));
+    var n = Math.floor((performance.now() - typer.t0) / per);
+    if (n >= full.length) { el.textContent = full; clearInterval(typer.timer); typer.timer = 0; return; }
+    if (el.getAttribute('data-n') === String(n)) return;
+    el.setAttribute('data-n', String(n));
+    el.innerHTML = esc(full.slice(0, n)) + '<span class="tw-rest">' + esc(full.slice(n)) + '</span>';
+  }
+  function typeStart(key) {
+    typer.key = key; typer.t0 = performance.now();
+    clearInterval(typer.timer);
+    typer.timer = setInterval(typeStep, 30);
+    typeStep();
+  }
+
+  // ---------------------------------------------------------------- leaderboard
+  // What everyone had before this question, worked out from the points gained
+  // on it. That is what lets the board show the climb.
+  function prevPlayers() {
+    var list = players().map(function (p) { return { id: p.id, prev: (p.total || 0) - (p.gained || 0) }; });
+    var by = {};
+    list.forEach(function (x) {
+      var better = 0;
+      list.forEach(function (y) { if (y.prev > x.prev) better++; });
+      by[x.id] = { total: x.prev, rank: better + 1 };
+    });
+    return { any: list.some(function (x) { return x.prev > 0; }), by: by };
+  }
+  function prevTeams(s, g) {
+    var gain = {}, mem = {};
+    players().forEach(function (p) {
+      gain[p.group] = (gain[p.group] || 0) + (p.gained || 0);
+      mem[p.group] = (mem[p.group] || 0) + 1;
+    });
+    var awards = H.card ? (H.card.awards || {}) : ((H.view && H.view.card_awards) || {});
+    var now = awards[g.current_index] || [];
+    var list = s.ranked.map(function (r) {
+      var got = (mem[r.name] ? gain[r.name] / mem[r.name] : 0) + (now.indexOf(r.name) >= 0 ? 100 : 0);
+      return { name: r.name, gain: got, prev: r.score - got };
+    });
+    var by = {};
+    list.forEach(function (x) {
+      var better = 0;
+      list.forEach(function (y) { if (y.prev > x.prev + 0.005) better++; });
+      by[x.name] = { total: x.prev, rank: better + 1, gain: x.gain };
+    });
+    return { any: list.some(function (x) { return x.prev > 0.005; }), by: by };
+  }
+
+  // One row. The HTML always holds the final numbers; animateBoards winds them
+  // back and plays them forward when the board first appears.
+  function boardRow(o) {
+    var mv = o.move > 0 ? '<span class="mv up">&#9650; ' + o.move + '</span>'
+      : o.move < 0 ? '<span class="mv">&#9660; ' + (-o.move) + '</span>' : '';
+    return '<div class="lrow' + (o.first ? ' first' : '') + '"' +
+      (o.anim ? ' data-prev="' + o.prevKey + '"' + (o.prevRank ? ' data-prev-rank="' + o.prevRank + '"' : '') : '') + '>' +
+      '<span class="r">' + o.rank + '</span>' +
+      '<span class="nm">' + o.name + '<small>' + o.sub + '</small></span>' + mv +
+      '<span class="sc">' + (o.anim && o.gain >= 0.5 ? '<span class="gain">+' + Q.num(o.gain) + '</span>' : '') +
+      (o.anim ? '<span class="cnt" data-from="' + o.from + '" data-to="' + o.to + '">' : '<span>') + Q.num(o.to) + '</span></span></div>';
+  }
+
+  function playerRows(list, compact, anim) {
     if (!list.length) return '<p class="kicker">No phone scores yet.</p>';
-    return '<div class="list' + (compact ? ' compact' : '') + '">' + list.map(function (p, i) {
-      return '<div class="lrow' + (i === 0 ? ' first' : '') + '"><span class="r">' + p.rank + '</span>' +
-        '<span class="nm">' + esc(p.label) + '<small>' + esc(p.group) + '</small></span>' +
-        '<span class="sc">' + Q.num(p.total) + '</span></div>';
+    var pv = anim ? prevPlayers() : null;
+    return '<div class="list' + (compact ? ' compact' : '') + '"' + (anim ? ' data-anim' : '') + '>' + list.map(function (p, i) {
+      var b = pv && pv.by[p.id];
+      var moved = !!(b && pv.any);
+      return boardRow({
+        first: i === 0, rank: p.rank, name: esc(p.label), sub: esc(p.group), anim: anim,
+        to: p.total || 0, from: b ? b.total : (p.total || 0), gain: p.gained || 0,
+        prevKey: (b ? b.rank : 0) * 1000 + i, prevRank: moved ? b.rank : 0, move: moved ? b.rank - p.rank : 0
+      });
     }).join('') + '</div>';
   }
 
-  function groupRows(ranked, compact) {
-    return '<div class="list' + (compact ? ' compact' : '') + '">' + ranked.map(function (r, i) {
-      return '<div class="lrow' + (i === 0 ? ' first' : '') + '"><span class="r">' + r.rank + '</span>' +
-        '<span class="nm">' + r.name + '<small>' + r.members + (r.members === 1 ? ' player' : ' players') + '</small></span>' +
-        '<span class="sc">' + Q.num(r.score) + '</span></div>';
+  function groupRows(ranked, compact, pv) {
+    return '<div class="list' + (compact ? ' compact' : '') + '"' + (pv ? ' data-anim' : '') + '>' + ranked.map(function (r, i) {
+      var b = pv && pv.by[r.name];
+      var moved = !!(b && pv.any);
+      return boardRow({
+        first: i === 0, rank: r.rank, name: r.name, sub: r.members + (r.members === 1 ? ' player' : ' players'), anim: !!pv,
+        to: r.score, from: b ? b.total : r.score, gain: b ? b.gain : 0,
+        prevKey: (b ? b.rank : 0) * 1000 + i, prevRank: moved ? b.rank : 0, move: moved ? b.rank - r.rank : 0
+      });
     }).join('') + '</div>';
   }
 
   function viewLeaderboard(g) {
     var s = standings();
-    return '<section>' +
+    return '<section class="is-board">' +
       '<p class="kicker">After question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</p>' +
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false) + '</div>' +
+      '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false, true) + '</div>' +
       '  <div><p class="kicker" style="margin-bottom:1.4vh">Teams</p>' + (H.hideScores
         ? '<p class="scores-hidden">Team scores are <b>top secret</b> until the final results.</p>'
-        : groupRows(s.ranked, false)) + '</div>' +
+        : groupRows(s.ranked, false, prevTeams(s, g))) + '</div>' +
       '</div></section>';
+  }
+
+  // Plays the board in: rows arrive in their old order with their old scores,
+  // the scores count up, then the rows slide to their new places.
+  var boardTimer = 0;
+  function animateBoards(key, loud) {
+    var lists = Array.prototype.slice.call(stage.querySelectorAll('.list[data-anim]'));
+    clearInterval(boardTimer);
+    if (!lists.length) return;
+    var moved = false;
+    lists.forEach(function (list) {
+      var rows = Array.prototype.slice.call(list.children);
+      var pitch = rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
+      var old = rows.slice().sort(function (a, b) { return Number(a.getAttribute('data-prev')) - Number(b.getAttribute('data-prev')); });
+      list.classList.add('pre');
+      old.forEach(function (row, i) {
+        var cur = rows.indexOf(row);
+        if (cur !== i) moved = true;
+        row.style.translate = '0 ' + ((i - cur) * pitch) + 'px';
+        var r = row.querySelector('.r'), c = row.querySelector('.cnt');
+        r.setAttribute('data-now', r.textContent);
+        if (row.getAttribute('data-prev-rank')) r.textContent = row.getAttribute('data-prev-rank');
+        if (c) c.textContent = Q.num(Number(c.getAttribute('data-from')));
+      });
+    });
+    var t0 = performance.now(), lastTick = -1, settled = false;
+    boardTimer = setInterval(function () {
+      if (H.lastKey !== key) { clearInterval(boardTimer); return; }
+      var t = performance.now() - t0;
+      var p = Math.max(0, Math.min(1, (t - 900) / 1400)), e = 1 - Math.pow(1 - p, 3);
+      var climbing = false;
+      Array.prototype.forEach.call(stage.querySelectorAll('.cnt[data-from]'), function (c) {
+        var a = Number(c.getAttribute('data-from')), b = Number(c.getAttribute('data-to'));
+        if (Math.round(a) !== Math.round(b)) climbing = true;
+        var txt = Q.num(a + (b - a) * e);
+        if (c.textContent !== txt) c.textContent = txt;
+      });
+      if (loud && climbing && p > 0 && p < 1) {
+        var k = Math.floor((t - 900) / 95);
+        if (k !== lastTick) { lastTick = k; sfx.count(k); }
+      }
+      if (t >= 2500 && !settled) {
+        settled = true;
+        lists.forEach(function (list) {
+          list.classList.remove('pre');
+          Array.prototype.forEach.call(list.children, function (row) {
+            row.style.transition = 'translate .9s cubic-bezier(.2, .8, .2, 1), background .5s ease, border-color .5s ease, box-shadow .5s ease';
+            row.style.translate = '0 0';
+            var r = row.querySelector('.r');
+            if (r && r.getAttribute('data-now')) r.textContent = r.getAttribute('data-now');
+          });
+        });
+        if (loud) {
+          if (moved) sfx.whoosh();
+          var g = game();
+          if (g) voice.say(leaderLine(g), true);
+        }
+      }
+      if (t >= 3800) clearInterval(boardTimer);
+    }, 33);
+  }
+
+  function leaderLine(g) {
+    var ps = players();
+    if (ps.length && ps[0].total > 0) {
+      var pv = prevPlayers(), top = ps[0], was = pv.by[top.id];
+      var name = top.name || top.label;
+      if (!pv.any) return name + ' takes the early lead!';
+      return was && was.rank === 1 ? name + ' is still on top.' : name + ' takes the lead!';
+    }
+    if (!H.hideScores) {
+      var first = standings().ranked[0];
+      if (first && first.score > 0) return 'Team ' + first.name + ' is in front.';
+    }
+    return '';
   }
 
   function viewFinal() {
     var s = standings();
     if (H.finalStep === 1) {
-      return '<section><p class="kicker">Final results</p><h1 class="h-big">Top <span class="grad-text">players</span></h1>' +
-        playerRows(players().slice(0, 5), false) + '</section>';
+      return '<section class="is-top"><p class="kicker">Final results</p><h1 class="h-big">Top <span class="grad-text">players</span></h1>' +
+        playerRows(players().slice(0, 5), false, false) + '</section>';
     }
     var r = s.ranked;
     function pod(row, place) {
@@ -498,14 +863,15 @@
         '<div class="sc">' + Q.num(row.score) + ' points</div><div class="block">' + row.rank + '</div></div>';
     }
     var winners = r.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
-    return '<section><p class="kicker">Final results</p>' +
-      '<h1 class="h-big">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
+    return '<section class="is-final"><p class="kicker">Final results</p>' +
+      '<h1 class="h-big win-title">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
       '<span class="grad-text">' + winners.join(' and ') + '</span></h1>' +
       '<div class="podium">' + pod(r[1], 2) + pod(r[0], 1) + pod(r[2], 3) + '</div>' +
       '<div class="rest">' + r.slice(3).map(function (x) {
         return '<div class="lrow"><span class="r">' + x.rank + '</span><span class="nm">' + x.name + '</span><span class="sc">' + Q.num(x.score) + '</span></div>';
       }).join('') + '</div></section>';
   }
+
 
   // ---------------------------------------------------------------- confetti
   // Plays once each time the winners' podium comes up: two cannons from the
@@ -576,6 +942,41 @@
     return { start: start, stop: stop };
   })();
 
+  function screenKey(g) {
+    return g ? g.status + ':' + g.current_index + ':' + (g.status === 'final' ? H.finalStep : 0) : '';
+  }
+
+  // What happens once when a screen first comes up. `loud` is false for the
+  // very first draw after unlocking, so a page reload never shouts.
+  function onEnter(g, key, loud) {
+    if (!g) return;
+    if (g.status === 'question') {
+      typeStart(key);
+      if (loud) {
+        sfx.whoosh();
+        var last = g.total_questions > 1 && g.current_index + 1 === g.total_questions;
+        voice.say((last ? 'Final question. ' : 'Question ' + (g.current_index + 1) + '. ') + (g.question_text || ''), true);
+      }
+    } else if (g.status === 'reveal') {
+      if (!loud) return;
+      sfx.reveal();
+      var o = opts(g), i = g.revealed_index;
+      if (i == null || !o[i]) return;
+      var right = pctRight(g);
+      var line = 'The answer is ' + (o.length > 2 ? Q.LETTERS[i] + '. ' : '') + o[i] + '.';
+      if (g.card_mode) line += ' Cards up!';
+      else if (right !== null) line += right >= 80 ? ' Sharp room!' : right <= 25 ? ' Ouch. That one stung.' : ' ' + right + ' percent got it.';
+      voice.say(line, true);
+    } else if (g.status === 'leaderboard') {
+      animateBoards(key, loud);
+    } else if (g.status === 'final' && H.finalStep === 1 && loud) {
+      var top = players()[0];
+      sfx.reveal();
+      if (top && top.total > 0) voice.say('And your top player: ' + (top.name || top.label) + '!', true);
+    }
+  }
+
+  var podiumTimer = 0;
   function render() {
     var g = game();
     var html;
@@ -584,10 +985,45 @@
     else if (g.status === 'question' || g.status === 'reveal') html = viewQuestion(g);
     else if (g.status === 'leaderboard') html = viewLeaderboard(g);
     else html = viewFinal();
-    if (html !== H.lastHtml) { stage.innerHTML = html; H.lastHtml = html; }
+
+    var key = screenKey(g);
+    var fresh = key !== H.lastKey;
+    var loud = fresh && H.announceReady;
+    if (H.unlocked && g) H.announceReady = true;
+    H.lastKey = key;
+    if (html !== H.lastHtml || fresh) {
+      stage.innerHTML = html;
+      H.lastHtml = html;
+      // Entrance animations hang off .enter, so a data refresh never replays them.
+      if (fresh && stage.firstElementChild) stage.firstElementChild.classList.add('enter');
+    }
+    if (fresh) onEnter(g, key, loud);
+    if (g && g.status === 'lobby') patchLobby();
+    patchLive(g);
+
+    // The podium builds for a moment, then the confetti and fanfare land with the winner.
     var podium = !!g && g.status === 'final' && H.finalStep === 0;
-    if (podium && !H.podiumShown) confetti.start();
-    else if (!podium && H.podiumShown) confetti.stop();
+    if (podium && !H.podiumShown) {
+      clearTimeout(podiumTimer);
+      podiumTimer = setTimeout(function () {
+        if (!H.podiumShown) return;
+        confetti.start();
+        if (loud) sfx.fanfare();
+      }, 2600);
+      if (loud) {
+        sfx.drumroll(2.5);
+        var winners = standings().ranked.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
+        setTimeout(function () {
+          if (!H.podiumShown) return;
+          voice.say(winners.length > 1
+            ? 'It is a tie! ' + winners.join(' and ') + ' share the win!'
+            : 'And the winning team is... Team ' + winners[0] + '!', true);
+        }, 900);
+      }
+    } else if (!podium && H.podiumShown) {
+      clearTimeout(podiumTimer);
+      confetti.stop();
+    }
     H.podiumShown = podium;
     renderControls();
     renderChips();
@@ -622,8 +1058,14 @@
     $('resetBtn').className = H.armed.reset > now ? 'arm' : '';
     $('manageBtn').hidden = s !== 'lobby';
     $('manageBtn').setAttribute('aria-pressed', String(H.manage));
+    $('questionsBtn').hidden = s !== 'lobby' || cardOn(); // the quiz can only be changed before it starts
     $('scoresBtn').setAttribute('aria-pressed', String(H.hideScores));
     $('scoresBtn').textContent = H.hideScores ? 'Team scores hidden' : 'Team scores shown';
+    $('soundBtn').setAttribute('aria-pressed', String(sfx.on()));
+    $('soundBtn').textContent = sfx.on() ? 'Sound on' : 'Sound off';
+    $('voiceBtn').hidden = !voice.ok;
+    $('voiceBtn').setAttribute('aria-pressed', String(voice.on()));
+    $('voiceBtn').textContent = voice.on() ? 'Voice on' : 'Voice off';
     $('cardToggle').checked = cardOn();
     var armedCard = H.armed.card > now;
     var sw = $('cardToggle').parentNode;
@@ -631,10 +1073,13 @@
     sw.lastChild.textContent = armedCard ? 'Click again for card mode' : 'Card mode';
   }
 
-  // Timer ring, status line and auto-reveal at time up (after the 1 second grace).
+  // Timer ring, heartbeat, status line and auto-reveal at time up (after the 1 second grace).
   function tick() {
     var g = game();
-    if (!g || g.status !== 'question') return;
+    if (!g || g.status !== 'question') {
+      if (H.lastBeat) { H.lastBeat = ''; document.body.classList.remove('hurry'); }
+      return;
+    }
     var left = Q.remaining(g);
     var t = $('ringT'), prog = $('ringProg'), st = $('qStatus');
     var shown = Math.max(0, Math.ceil(left));
@@ -643,6 +1088,22 @@
       t.className = 't' + (g.paused_at ? ' small' : '');
     }
     if (prog) prog.setAttribute('stroke-dashoffset', String(276.46 * (1 - Math.max(0, Math.min(1, left / (g.duration_s || 20))))));
+
+    // Last five seconds: the ring and the edge of the screen beat like a heart.
+    var low = !g.paused_at && left > 0 && left <= 5;
+    document.body.classList.toggle('hurry', low);
+    if (t && t.parentNode) t.parentNode.classList.toggle('low', low);
+    var beat = g.current_index + ':' + shown;
+    if (!g.paused_at && left > 0 && left <= 10 && beat !== H.lastBeat) {
+      if (H.announceReady) { if (low) sfx.beat(shown); else sfx.tick(); }
+    }
+    H.lastBeat = beat;
+    if (!g.paused_at && left <= 0 && H.buzzed !== g.current_index) {
+      if (H.announceReady && left > -1.5) sfx.buzz();
+      H.buzzed = g.current_index;
+    }
+    if (left > 0 && H.buzzed === g.current_index) H.buzzed = -1; // the question was restarted
+
     if (st) {
       var all = !g.card_mode && players().length > 0 && H.view && H.view.answers_in >= players().length;
       st.textContent = g.paused_at ? 'Timer paused' : left <= 0 ? (g.card_mode ? 'Time\'s up. Cards up!' : 'Time\'s up')
@@ -654,6 +1115,7 @@
     }
   }
 
+
   var toastTimer;
   function toast(msg) {
     var el = $('toast');
@@ -662,6 +1124,210 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.hidden = true; }, 3800);
   }
+
+  // ---------------------------------------------------------------- question picker
+  // The bank lives in the database (private, read with the PIN). The host ticks
+  // the questions for this quiz, puts them in order and saves. Lobby only.
+  var P = {
+    open: false, bank: null, sel: [], saved: [], unlinked: 0, filter: 'All', search: '',
+    answers: false, openId: null, loading: false, err: '', msg: '', armClose: 0
+  };
+
+  function pkDirty() { return P.sel.join(',') !== P.saved.join(','); }
+  function pkGet(id) {
+    var b = P.bank || [];
+    for (var i = 0; i < b.length; i++) if (b[i].id === id) return b[i];
+    return null;
+  }
+  function pkOptions(q) {
+    var o = q.options;
+    if (typeof o === 'string') { try { o = JSON.parse(o); } catch (e) { o = []; } }
+    return Array.isArray(o) ? o : [];
+  }
+
+  function openPicker() {
+    var g = game();
+    if (!g || g.status !== 'lobby') { toast('Questions can only be changed in the lobby, before the quiz starts.'); return; }
+    if (cardOn()) { toast('Turn card mode off to change the questions.'); return; }
+    P.open = true; P.loading = true; P.err = ''; P.msg = ''; P.armClose = 0; P.openId = null;
+    $('picker').hidden = false;
+    pkRender();
+    call('host_bank').then(function (r) {
+      P.loading = false;
+      if (r.network) P.err = 'net';
+      else if (r.error || !r.data || !r.data.bank) P.err = 'missing';
+      else {
+        P.bank = r.data.bank;
+        P.sel = (r.data.selected || []).slice();
+        P.saved = P.sel.slice();
+        P.unlinked = r.data.unlinked || 0;
+      }
+      pkRender();
+      if (!P.err) $('pkSearch').focus();
+    });
+  }
+
+  function closePicker(force) {
+    if (!P.open) return;
+    if (!force && pkDirty() && !(P.armClose > Date.now())) {
+      P.armClose = Date.now() + 4000;
+      pkRender();
+      setTimeout(pkRender, 4100);
+      return;
+    }
+    P.open = false; P.armClose = 0;
+    $('picker').hidden = true;
+  }
+
+  function pkMatches(q) {
+    if (P.filter === 'Answer checked') { if (!q.verified) return false; }
+    else if (P.filter === 'In this quiz') { if (P.sel.indexOf(q.id) < 0) return false; }
+    else if (P.filter !== 'All' && q.module !== P.filter) return false;
+    var s = P.search.trim().toLowerCase();
+    if (!s) return true;
+    return (q.text + ' ' + q.module + ' ' + q.category + ' ' + pkOptions(q).join(' ')).toLowerCase().indexOf(s) >= 0;
+  }
+
+  function pkRow(q) {
+    var pos = P.sel.indexOf(q.id), on = pos >= 0, o = pkOptions(q);
+    var kind = o.length === 2 && /^true$/i.test(o[0]) && /^false$/i.test(o[1]) ? 'True or false' : o.length + ' options';
+    var tags = '<span class="tag">' + esc(q.module) + '</span>' +
+      (q.category && q.module.toLowerCase().indexOf(String(q.category).toLowerCase()) < 0 ? '<span class="tag">' + esc(q.category) + '</span>' : '') +
+      '<span class="tag">' + kind + '</span>' +
+      (q.verified ? '<span class="tag ok">Answer checked</span>' : '<span class="tag warn">Answer not confirmed</span>');
+    var more = '';
+    if (P.openId === q.id) {
+      more = '<ol class="pk-opts">' + o.map(function (t, i) {
+        return '<li class="' + (P.answers && i === q.correct_index ? 'right' : '') + '"><i>' + Q.LETTERS[i] + '</i><span>' + esc(t) + '</span></li>';
+      }).join('') + '</ol>' +
+        (q.note ? '<p class="pk-note">' + esc(q.note) + '</p>' : '') +
+        (P.answers && q.explanation ? '<p class="pk-expl">' + esc(q.explanation) + '</p>' : '') +
+        (P.answers ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>');
+    }
+    return '<div class="pk-q' + (on ? ' on' : '') + '">' +
+      '<button type="button" class="pk-add" data-pk="toggle" data-id="' + q.id + '" aria-pressed="' + on + '" aria-label="' +
+      (on ? 'Remove from the quiz' : 'Add to the quiz') + '">' + (on ? pos + 1 : '+') + '</button>' +
+      '<div class="pk-main" data-pk="expand" data-id="' + q.id + '" role="button" tabindex="0" aria-expanded="' + (P.openId === q.id) + '">' +
+      '<p class="pk-text">' + esc(q.text) + '</p><div class="pk-meta">' + tags + '</div>' + more + '</div></div>';
+  }
+
+  function pkRender() {
+    if (!P.open) return;
+    var bank = P.bank || [];
+    var close = $('pkClose'), armed = P.armClose > Date.now();
+    close.textContent = armed ? 'Close without saving?' : 'Close';
+    close.className = 'pk-btn' + (armed ? ' arm' : '');
+    $('pkAnswers').checked = P.answers;
+
+    // filters
+    var mods = [];
+    bank.forEach(function (q) { if (mods.indexOf(q.module) < 0) mods.push(q.module); });
+    var filters = [['All', bank.length]].concat(mods.map(function (m) {
+      return [m, bank.filter(function (q) { return q.module === m; }).length];
+    }));
+    if (bank.length) {
+      filters.push(['Answer checked', bank.filter(function (q) { return q.verified; }).length]);
+      filters.push(['In this quiz', P.sel.length]);
+    }
+    $('pkFilters').innerHTML = filters.map(function (f) {
+      return '<button type="button" data-pk="filter" data-f="' + esc(f[0]) + '" aria-pressed="' + (P.filter === f[0]) + '">' +
+        esc(f[0]) + '<b>' + f[1] + '</b></button>';
+    }).join('');
+
+    // bank list
+    var list = $('pkList'), top = list.scrollTop, html;
+    if (P.loading && !P.bank) html = '<p class="pk-empty">Loading the question bank...</p>';
+    else if (P.err === 'net') html = '<p class="pk-empty">No connection. The question bank needs the internet.</p>';
+    else if (P.err === 'missing') html = '<p class="pk-empty">The question bank is not set up in Supabase yet. In the SQL editor, run <code>migrations/question_bank.sql</code>, then <code>bank.local.sql</code>.</p>';
+    else if (!bank.length) html = '<p class="pk-empty">The bank is empty. Run <code>bank.local.sql</code> in the Supabase SQL editor.</p>';
+    else {
+      var shown = bank.filter(pkMatches);
+      html = shown.length ? shown.map(pkRow).join('') : '<p class="pk-empty">No questions match.</p>';
+    }
+    list.innerHTML = html;
+    list.scrollTop = top;
+
+    // this quiz
+    var chosen = P.sel.map(pkGet).filter(Boolean);
+    $('pkCount').textContent = chosen.length ? ' · ' + chosen.length : '';
+    $('pkChosen').innerHTML = chosen.length ? chosen.map(function (q, i) {
+      return '<li><span class="n">' + (i + 1) + '</span><span class="t">' + esc(q.text) + '</span><span class="acts">' +
+        '<button type="button" data-pk="up" data-id="' + q.id + '" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>&#8593;</button>' +
+        '<button type="button" data-pk="down" data-id="' + q.id + '" aria-label="Move down"' + (i === chosen.length - 1 ? ' disabled' : '') + '>&#8595;</button>' +
+        '<button type="button" data-pk="remove" data-id="' + q.id + '" aria-label="Remove">&#215;</button></span></li>';
+    }).join('') : '<li class="pk-empty" style="display:block">Nothing picked yet. Press + on a question to add it.</li>';
+
+    var msg = P.msg;
+    if (!msg && chosen.length) {
+      var open = chosen.filter(function (q) { return !q.verified; }).length;
+      msg = chosen.length + (chosen.length === 1 ? ' question' : ' questions') + ', about ' + Math.max(1, Math.round(chosen.length * 1.1)) + ' minutes.' +
+        (open ? ' ' + open + (open === 1 ? ' has' : ' have') + ' an answer that is not confirmed yet.' : '');
+    }
+    if (!msg && P.unlinked) msg = 'The quiz in the database has ' + P.unlinked + ' questions that are not in the bank. Saving replaces them.';
+    $('pkMsg').textContent = msg || '';
+    var save = $('pkSave');
+    save.disabled = P.loading || !chosen.length || !pkDirty();
+    save.textContent = P.loading && P.bank ? 'Saving...' : !pkDirty() && chosen.length ? 'Saved' : 'Save quiz';
+  }
+
+  function pkSave() {
+    if (P.loading || !P.sel.length || !pkDirty()) return;
+    P.loading = true; P.msg = '';
+    pkRender();
+    var ids = P.sel.slice();
+    call('host_set_questions', { p_ids: ids }).then(function (r) {
+      P.loading = false;
+      var note = r.data && r.data.note;
+      if (r.network) P.msg = 'No connection. Nothing was saved.';
+      else if (note === 'questions_set') {
+        P.saved = ids; P.unlinked = 0;
+        loadQuestions(); // refresh the copy kept for card mode
+        toast('Quiz saved: ' + ids.length + (ids.length === 1 ? ' question.' : ' questions.'));
+        closePicker(true);
+        render();
+        return;
+      }
+      else if (note === 'not_in_lobby') P.msg = 'The quiz has already started. Reset the game to change the questions.';
+      else if (note === 'bad_count') P.msg = 'Pick between 1 and 40 questions.';
+      else if (note === 'bad_ids') P.msg = 'One of these questions is no longer in the bank. Close and open the picker again.';
+      else P.msg = 'Could not save' + (r.error ? ': ' + r.error : '.');
+      pkRender();
+    });
+  }
+
+  $('picker').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pk]');
+    if (!b || b.disabled) return;
+    var a = b.getAttribute('data-pk'), id = Number(b.getAttribute('data-id'));
+    if (a === 'close') return closePicker();
+    if (a === 'save') return pkSave();
+    P.msg = ''; P.armClose = 0;
+    var i = P.sel.indexOf(id);
+    if (a === 'toggle') {
+      if (i >= 0) P.sel.splice(i, 1);
+      else if (P.sel.length >= 40) P.msg = 'A quiz can have 40 questions at most.';
+      else P.sel.push(id);
+    }
+    else if (a === 'remove') { if (i >= 0) P.sel.splice(i, 1); }
+    else if (a === 'up') { if (i > 0) { P.sel.splice(i, 1); P.sel.splice(i - 1, 0, id); } }
+    else if (a === 'down') { if (i >= 0 && i < P.sel.length - 1) { P.sel.splice(i, 1); P.sel.splice(i + 1, 0, id); } }
+    else if (a === 'expand') P.openId = P.openId === id ? null : id;
+    else if (a === 'filter') P.filter = b.getAttribute('data-f');
+    else if (a === 'clear') P.sel = [];
+    else if (a === 'shuffle') {
+      for (var k = P.sel.length - 1; k > 0; k--) {
+        var j = Math.floor(Math.random() * (k + 1)), tmp = P.sel[k];
+        P.sel[k] = P.sel[j]; P.sel[j] = tmp;
+      }
+    }
+    pkRender();
+  });
+  $('picker').addEventListener('keydown', function (e) {
+    var m = e.target.closest && e.target.closest('.pk-main');
+    if (m && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); m.click(); }
+  });
+  $('pkSearch').addEventListener('input', function (e) { P.search = e.target.value; pkRender(); });
+  $('pkAnswers').addEventListener('change', function (e) { P.answers = e.target.checked; pkRender(); });
 
   // ---------------------------------------------------------------- PIN gate
   function sha(text) {
@@ -685,6 +1351,7 @@
 
   function unlocked() {
     H.unlocked = true;
+    H.seen = null; // the cached lobby may be old: do not greet everyone at once
     $('pin').blur();
     $('gate').hidden = true;
     render();
@@ -766,6 +1433,19 @@
     else if (a === 'end') end();
     else if (a === 'reset') reset();
     else if (a === 'manage') { H.manage = !H.manage; render(); }
+    else if (a === 'questions') openPicker();
+    else if (a === 'sound') {
+      sfx.set(!sfx.on());
+      if (sfx.on()) sfx.join();
+      toast(sfx.on() ? 'Sound on.' : 'Sound off.');
+      renderControls();
+    }
+    else if (a === 'voice') {
+      voice.set(!voice.on());
+      if (voice.on()) voice.say('Voice on.', true);
+      toast(voice.on() ? 'Voice on. The page reads questions and results aloud.' : 'Voice off.');
+      renderControls();
+    }
     else if (a === 'scores') {
       H.hideScores = !H.hideScores;
       Q.local.set(K.hideScores, H.hideScores ? 'on' : 'off');
@@ -802,7 +1482,11 @@
     var rm = e.target.closest('[data-remove]');
     if (rm) return removePlayer(rm.getAttribute('data-remove'), rm.getAttribute('data-name'));
   });
+  // Browsers only allow sound after a click or key press.
+  document.addEventListener('pointerdown', function () { sfx.unlock(); }, true);
+  document.addEventListener('keydown', function () { sfx.unlock(); }, true);
   document.addEventListener('keydown', function (e) {
+    if (P.open) { if (e.key === 'Escape') closePicker(); return; }
     if (!H.unlocked || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     var t = e.target;
     if (t && ((t.tagName === 'INPUT' && t.type !== 'checkbox') || t.tagName === 'TEXTAREA')) return;

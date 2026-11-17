@@ -27,6 +27,7 @@ create extension if not exists pgcrypto with schema extensions;
 drop table if exists public.card_awards cascade;
 drop table if exists public.answers cascade;
 drop table if exists public.players cascade;
+drop table if exists public.question_bank cascade;
 drop table if exists public.questions cascade;
 drop table if exists public.game_secrets cascade;
 drop table if exists public.games cascade;
@@ -68,7 +69,26 @@ create table public.questions (
   correct_index int  not null check (correct_index between 0 and 3),
   check (correct_index < jsonb_array_length(options)),
   explanation   text not null,
+  bank_id       int,  -- which question_bank row this came from (null if loaded by hand)
   primary key (game_id, idx)
+);
+
+-- Every question you could ask. The host picks which ones go into the quiz
+-- (host_set_questions copies them into questions). Filled by bank.local.sql,
+-- which is kept off GitHub.
+create table public.question_bank (
+  game_id       uuid not null references public.games (id) on delete cascade,
+  id            int  not null,
+  module        text not null,
+  category      text not null,
+  text          text not null,
+  options       jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 4),
+  correct_index int  not null check (correct_index between 0 and 3),
+  check (correct_index < jsonb_array_length(options)),
+  explanation   text not null default '',
+  verified      boolean not null default false,  -- the answer has been checked
+  note          text not null default '',
+  primary key (game_id, id)
 );
 
 create table public.players (
@@ -106,11 +126,12 @@ create table public.card_awards (
 alter table public.games        enable row level security;
 alter table public.game_secrets enable row level security;
 alter table public.questions    enable row level security;
+alter table public.question_bank enable row level security;
 alter table public.players      enable row level security;
 alter table public.answers      enable row level security;
 alter table public.card_awards  enable row level security;
 
-revoke all on public.games, public.game_secrets, public.questions,
+revoke all on public.games, public.game_secrets, public.questions, public.question_bank,
               public.players, public.answers, public.card_awards
   from anon, authenticated;
 
@@ -309,18 +330,25 @@ begin
   where id = p_game;
 end $$;
 
--- Full host view: game row, players, groups, answer count, distribution.
+-- Full host view: game row, players (with points gained on the current question), groups,
+-- answer count (in total and per team), distribution.
 create or replace function public._host_view(p_game uuid, p_note text default null)
 returns jsonb language plpgsql stable security definer set search_path = public as $$
 declare
   g public.games;
   dist jsonb := null;
   n_in int := 0;
+  by_team jsonb := '{}'::jsonb;
 begin
   select * into g from public.games where id = p_game;
   if g.current_index >= 0 then
     select count(*) into n_in from public.answers
      where game_id = p_game and question_idx = g.current_index;
+    select coalesce(jsonb_object_agg(t.group_name, t.n), '{}'::jsonb) into by_team
+      from (select p.group_name, count(*)::int n
+              from public.answers a join public.players p on p.id = a.player_id
+             where a.game_id = p_game and a.question_idx = g.current_index
+             group by p.group_name) t;
     if g.status in ('reveal', 'leaderboard', 'final') then
       select jsonb_agg(coalesce(c.n, 0) order by s.i) into dist
         from generate_series(0, coalesce(jsonb_array_length(g.options), 4) - 1) s(i)
@@ -334,13 +362,16 @@ begin
     'game', public._public_game(g),
     'server_now', now(),
     'answers_in', n_in,
+    'team_answers', by_team,
     'distribution', dist,
     'note', p_note,
     'players', coalesce((select jsonb_agg(jsonb_build_object(
         'id', t.player_id, 'name', t.name, 'label', t.label, 'group', t.group_name,
-        'total', t.total, 'correct', t.correct, 'answered', t.answered, 'rank', t.rank)
+        'total', t.total, 'correct', t.correct, 'answered', t.answered, 'rank', t.rank,
+        'gained', coalesce(cur.points, 0))
         order by t.total desc, t.correct desc, t.joined_at)
-      from public._player_totals(p_game) t), '[]'::jsonb),
+      from public._player_totals(p_game) t
+      left join public.answers cur on cur.player_id = t.player_id and cur.question_idx = g.current_index), '[]'::jsonb),
     'groups', (select jsonb_agg(jsonb_build_object(
         'name', s.group_name, 'members', s.members, 'avg', s.avg_total,
         'card_points', s.card_points, 'score', s.score, 'correct', s.correct, 'rank', s.rank))
@@ -419,12 +450,14 @@ begin
   select * into me from public._player_totals(g.id) t where t.player_id = p.id;
 
   if g.status in ('reveal', 'leaderboard', 'final') and g.current_index >= 0 then
+    select count(*) into n_players from public.players where game_id = g.id;
     res := jsonb_build_object(
       'question_idx', g.current_index,
       'answered', a.id is not null,
       'choice', a.choice,
       'is_correct', coalesce(a.is_correct, false),
-      'points', coalesce(a.points, 0));
+      'points', coalesce(a.points, 0),
+      'rank', me.rank, 'players', n_players);
   end if;
 
   if g.status = 'final' then
@@ -662,6 +695,53 @@ begin
   return public._host_view(a.p_game);
 end $$;
 
+-- The question bank, with answers, and which bank questions are in the quiz now.
+create or replace function public.host_bank(p_code text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare a record;
+begin
+  a := public._host_auth(p_code, p_pin);
+  if a.p_game is null then return jsonb_build_object('error', a.p_err); end if;
+  return jsonb_build_object(
+    'bank', coalesce((select jsonb_agg(jsonb_build_object(
+        'id', b.id, 'module', b.module, 'category', b.category, 'text', b.text,
+        'options', b.options, 'correct_index', b.correct_index, 'explanation', b.explanation,
+        'verified', b.verified, 'note', b.note) order by b.id)
+      from public.question_bank b where b.game_id = a.p_game), '[]'::jsonb),
+    'selected', coalesce((select jsonb_agg(q.bank_id order by q.idx)
+      from public.questions q where q.game_id = a.p_game and q.bank_id is not null), '[]'::jsonb),
+    'unlinked', (select count(*) from public.questions q where q.game_id = a.p_game and q.bank_id is null),
+    'status', (select status from public.games where id = a.p_game));
+end $$;
+
+-- Replace the quiz's questions with the chosen bank questions, in the given order.
+-- Only in the lobby: changing questions mid-game would break the scores.
+create or replace function public.host_set_questions(p_code text, p_pin text, p_ids int[])
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare a record; g public.games; n int;
+begin
+  a := public._host_auth(p_code, p_pin);
+  if a.p_game is null then return jsonb_build_object('error', a.p_err); end if;
+  select * into g from public.games where id = a.p_game for update;
+  if g.status <> 'lobby' then return public._host_view(a.p_game, 'not_in_lobby'); end if;
+  n := coalesce(array_length(p_ids, 1), 0);
+  if n < 1 or n > 40 then return public._host_view(a.p_game, 'bad_count'); end if;
+  if (select count(distinct x) from unnest(p_ids) x) <> n
+     or (select count(*) from public.question_bank b where b.game_id = a.p_game and b.id = any (p_ids)) <> n then
+    return public._host_view(a.p_game, 'bad_ids');
+  end if;
+  -- The lobby has no scores worth keeping; old answers would point at the wrong questions.
+  delete from public.card_awards where game_id = a.p_game;
+  delete from public.answers where game_id = a.p_game;
+  delete from public.questions where game_id = a.p_game;
+  insert into public.questions (game_id, idx, category, text, options, correct_index, explanation, bank_id)
+  select a.p_game, (t.ord - 1)::int, b.category, b.text, b.options, b.correct_index, b.explanation, b.id
+    from unnest(p_ids) with ordinality t(id, ord)
+    join public.question_bank b on b.game_id = a.p_game and b.id = t.id;
+  update public.games set total_questions = n, updated_at = now() where id = a.p_game;
+  return public._host_view(a.p_game, 'questions_set');
+end $$;
+
 -- Wipes players, answers and card awards and returns to the lobby.
 create or replace function public.host_reset(p_code text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -744,6 +824,8 @@ grant execute on function
   public.host_login(text, text),
   public.host_state(text, text),
   public.host_questions(text, text),
+  public.host_bank(text, text),
+  public.host_set_questions(text, text, int[]),
   public.host_start(text, text),
   public.host_open_question(text, text, text, int, int),
   public.host_reveal(text, text, int),
@@ -759,7 +841,8 @@ grant execute on function
 to anon, authenticated;
 
 -- ---------------------------------------------------------------- the game
--- The questions live in questions.local.sql, which is kept off GitHub.
+-- The questions live in bank.local.sql (the full bank; pick from it on the host page)
+-- or questions.local.sql (a fixed set). Both are kept off GitHub.
 insert into public.games (join_code, total_questions) values ('ARCPH', 0);
 
 
