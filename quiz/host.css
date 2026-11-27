@@ -499,3 +499,12 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
 
 /* Plain small text (status lines, hints) */
 .note { margin: 0; font-size: 2.2vh; color: var(--muted); }
+
+/* ---------- Header: QUIZ TIME with a live clock ---------- */
+.host .quiz-time { display: inline-flex; align-items: center; gap: 1.2vh; color: #fff; }
+.host .quiz-time b {
+  font-family: var(--font-body); font-weight: 700; font-size: 3vh; letter-spacing: .06em;
+  background: var(--grad-peach); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.host .quiz-time .clock { width: 3.4vh; height: 3.4vh; color: #F3CA94; filter: drop-shadow(0 0 1vh rgba(243, 150, 111, .45)); }
+.host .quiz-time .clock line { transition: transform .25s cubic-bezier(.4, 2.2, .6, 1); }

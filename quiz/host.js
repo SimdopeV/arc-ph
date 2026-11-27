@@ -1014,8 +1014,6 @@
     else if (g.status === 'leaderboard') html = viewLeaderboard(g);
     else html = viewFinal();
 
-    var ev = $('eventName');
-    if (ev.textContent !== Q.EVENT) ev.textContent = Q.EVENT;
     var key = screenKey(g);
     var fresh = key !== H.lastKey;
     var loud = fresh && H.announceReady;
@@ -1946,6 +1944,17 @@
   window.addEventListener('online', function () { if (H.unlocked) call('host_state').then(render); });
 
   setInterval(tick, 100);
+
+  // The header clock shows the real time; the second hand ticks.
+  function clockTick() {
+    var d = new Date(), s = d.getSeconds(), m = d.getMinutes() + s / 60, h = (d.getHours() % 12) + m / 60;
+    [['clockH', h * 30], ['clockM', m * 6], ['clockS', s * 6]].forEach(function (x) {
+      var el = $(x[0]);
+      if (el) el.setAttribute('transform', 'rotate(' + x[1] + ' 20 20)');
+    });
+  }
+  clockTick();
+  setInterval(clockTick, 1000);
   render();
   if (H.pin) { $('pin').value = H.pin; tryUnlock(H.pin); } else { $('pin').focus(); }
   setTimeout(poll, 1000);
