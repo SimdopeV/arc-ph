@@ -54,7 +54,7 @@
       var shown = c.status === 'reveal' || c.status === 'leaderboard' || c.status === 'final';
       return {
         status: c.status, current_index: c.index, total_questions: H.questions ? H.questions.length : 12,
-        duration_s: 20, category: q ? q.category : null, question_text: q ? q.text : null,
+        duration_s: (q && q.time_s) || 20, points: (q && q.points) || 'standard', category: q ? q.category : null, question_text: q ? q.text : null,
         options: q ? q.options : null, started_at: c.started_at, paused_at: c.paused_at,
         revealed_index: shown && q ? q.correct_index : null, explanation: shown && q ? q.explanation : null,
         card_mode: true
@@ -512,6 +512,16 @@
     return H.qr;
   }
 
+  // "20 seconds each", or the rough length when the questions have different times.
+  function quizLength() {
+    var qs = H.questions || [];
+    var times = qs.map(function (q) { return Number(q.time_s) || 20; });
+    if (!times.length) return '20 seconds each';
+    if (times.every(function (t) { return t === times[0]; })) return timeLabel(times[0]) + ' each';
+    var secs = times.reduce(function (a, b) { return a + b + 25; }, 0);
+    return 'about ' + Math.max(1, Math.round(secs / 60)) + ' minutes';
+  }
+
   function viewLobby() {
     var g = game();
     var counts = {};
@@ -531,7 +541,7 @@
         return '<button type="button" class="' + (arm ? 'arm' : '') + '" data-remove="' + p.id + '" data-name="' + esc(p.label) + '">' +
           (arm ? 'Remove ' + esc(p.label) + '?' : esc(p.label) + ' · ' + esc(p.group)) + '</button>';
       }).join('') : '<span>No players yet.</span>') + '</div>' +
-        '<p class="kicker">Click a name twice to remove that player.</p>';
+        '<p class="note">Click a name twice to remove that player.</p>';
     } else {
       names = '<div class="names">' + ps.slice(-24).reverse().map(function (p) {
         return '<span data-id="' + p.id + '">' + esc(p.label) + '</span>';
@@ -542,7 +552,6 @@
     return '<section class="lobby">' +
       '<div class="qr-card">' + qrSvg() + '<div class="qr-url">' + esc(shortUrl) + '</div></div>' +
       '<div class="lobby-side">' +
-      '  <p class="kicker">Live quiz · ' + total + (total === 1 ? ' question' : ' questions') + ' · ' + ((g && g.duration_s) || 20) + ' seconds each</p>' +
       '  <h1 class="h-big">Scan to <span class="grad-text">join</span></h1>' +
       '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
       '  <div class="lobby-groups' + (nTeams > 6 ? ' dense' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + groups + '</div>' + names +
@@ -652,7 +661,9 @@
     return '<section class="' + (revealed ? 'is-reveal' : 'is-question') + '">' +
       '<div class="q-top"><div>' +
       '  <div class="q-meta"><span class="num">Question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</span>' +
-      (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') + chip + '</div>' +
+      (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') +
+      (g.points === 'double' ? '<span class="pts double">Double points</span>' : g.points === 'none' ? '<span class="pts none">No points</span>' : '') +
+      chip + '</div>' +
       '  <h1 class="q-text">' + esc(g.question_text) + '</h1>' +
       '</div>' + (revealed ? '' : ring()) + '</div>' +
       '<div class="tiles">' + tiles + '</div>' + foot +
@@ -750,7 +761,7 @@
   }
 
   function playerRows(list, compact, anim) {
-    if (!list.length) return '<p class="kicker">No phone scores yet.</p>';
+    if (!list.length) return '<p class="note">No phone scores yet.</p>';
     var pv = anim ? prevPlayers() : null;
     return '<div class="list' + (compact ? ' compact' : '') + '"' + (anim ? ' data-anim' : '') + '>' + list.map(function (p, i) {
       var b = pv && pv.by[p.id];
@@ -781,11 +792,10 @@
     var cut = s.ranked.length > 8;
     var shown = cut ? s.ranked.slice(0, 8) : s.ranked;
     return '<section class="is-board">' +
-      '<p class="kicker">After question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</p>' +
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">Top players</p>' + playerRows(players().slice(0, 5), false, true) + '</div>' +
-      '  <div><p class="kicker" style="margin-bottom:1.4vh">' + (cut ? 'Top 8 teams' : 'Teams') + '</p>' + (H.hideScores
+      '  <div>' + playerRows(players().slice(0, 10), players().length > 5, true) + '</div>' +
+      '  <div>' + (H.hideScores
         ? '<p class="scores-hidden">Team scores are <b>top secret</b> until the final results.</p>'
         : groupRows(shown, shown.length > 5, prevTeams(s, g))) + '</div>' +
       '</div></section>';
@@ -869,8 +879,8 @@
   function viewFinal() {
     var s = standings();
     if (H.finalStep === 1) {
-      return '<section class="is-top"><p class="kicker">Final results</p><h1 class="h-big">Top <span class="grad-text">players</span></h1>' +
-        playerRows(players().slice(0, 5), false, false) + '</section>';
+      return '<section class="is-top"><h1 class="h-big">Top <span class="grad-text">players</span></h1>' +
+        playerRows(players().slice(0, 10), players().length > 5, false) + '</section>';
     }
     var r = s.ranked;
     function pod(row, place) {
@@ -879,7 +889,7 @@
         '<div class="sc">' + Q.num(row.score) + ' points</div><div class="block">' + row.rank + '</div></div>';
     }
     var winners = r.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
-    return '<section class="is-final"><p class="kicker">Final results</p>' +
+    return '<section class="is-final">' +
       '<h1 class="h-big win-title">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
       '<span class="grad-text">' + esc(winners.join(' and ')) + '</span></h1>' +
       '<div class="podium">' + pod(r[1], 2) + pod(r[0], 1) + pod(r[2], 3) + '</div>' +
@@ -971,7 +981,9 @@
       if (loud) {
         sfx.whoosh();
         var last = g.total_questions > 1 && g.current_index + 1 === g.total_questions;
-        voice.say((last ? 'Final question. ' : 'Question ' + (g.current_index + 1) + '. ') + (g.question_text || ''), true);
+        voice.say((last ? 'Final question. ' : 'Question ' + (g.current_index + 1) + '. ') +
+          (g.points === 'double' ? 'Double points! ' : g.points === 'none' ? 'Just for fun, no points. ' : '') +
+          (g.question_text || ''), true);
       }
     } else if (g.status === 'reveal') {
       if (!loud) return;
@@ -996,7 +1008,7 @@
   function render() {
     var g = game();
     var html;
-    if (!g) html = '<section><p class="kicker">Loading the game...</p></section>';
+    if (!g) html = '<section><p class="note">Loading the game...</p></section>';
     else if (g.status === 'lobby') html = viewLobby();
     else if (g.status === 'question' || g.status === 'reveal') html = viewQuestion(g);
     else if (g.status === 'leaderboard') html = viewLeaderboard(g);
@@ -1188,6 +1200,7 @@
 
   function closePicker(force) {
     if (!P.open) return;
+    if (E.open) { if (!closeEditor(force)) return; if (!force) return; }
     if (!force && pkDirty() && !(P.armClose > Date.now())) {
       P.armClose = Date.now() + 4000;
       pkRender();
@@ -1213,6 +1226,8 @@
     var tags = '<span class="tag">' + esc(q.module) + '</span>' +
       (q.category && q.module.toLowerCase().indexOf(String(q.category).toLowerCase()) < 0 ? '<span class="tag">' + esc(q.category) + '</span>' : '') +
       '<span class="tag">' + kind + '</span>' +
+      '<span class="tag">' + timeShort(q.time_s) + '</span>' +
+      (q.points && q.points !== 'standard' ? '<span class="tag pts-' + q.points + '">' + pointsLabel(q.points) + '</span>' : '') +
       (q.verified ? '<span class="tag ok">Answer checked</span>' : '<span class="tag warn">Answer not confirmed</span>');
     var more = '';
     if (P.openId === q.id) {
@@ -1221,7 +1236,9 @@
       }).join('') + '</ol>' +
         (q.note ? '<p class="pk-note">' + esc(q.note) + '</p>' : '') +
         (P.answers && q.explanation ? '<p class="pk-expl">' + esc(q.explanation) + '</p>' : '') +
-        (P.answers ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>');
+        (P.answers ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>') +
+        '<div class="pk-row-acts"><button type="button" class="pk-btn" data-pk="edit" data-id="' + q.id + '">Edit</button>' +
+        '<button type="button" class="pk-btn" data-pk="dup" data-id="' + q.id + '">Duplicate</button></div>';
     }
     return '<div class="pk-q' + (on ? ' on' : '') + '">' +
       '<button type="button" class="pk-add" data-pk="toggle" data-id="' + q.id + '" aria-pressed="' + on + '" aria-label="' +
@@ -1270,7 +1287,8 @@
     var chosen = P.sel.map(pkGet).filter(Boolean);
     $('pkCount').textContent = chosen.length ? ' · ' + chosen.length : '';
     $('pkChosen').innerHTML = chosen.length ? chosen.map(function (q, i) {
-      return '<li><span class="n">' + (i + 1) + '</span><span class="t">' + esc(q.text) + '</span><span class="acts">' +
+      return '<li><span class="n">' + (i + 1) + '</span><span class="t">' + esc(q.text) +
+        '<small>' + timeShort(q.time_s) + (q.points && q.points !== 'standard' ? ' · ' + pointsLabel(q.points) : '') + '</small></span><span class="acts">' +
         '<button type="button" data-pk="up" data-id="' + q.id + '" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>&#8593;</button>' +
         '<button type="button" data-pk="down" data-id="' + q.id + '" aria-label="Move down"' + (i === chosen.length - 1 ? ' disabled' : '') + '>&#8595;</button>' +
         '<button type="button" data-pk="remove" data-id="' + q.id + '" aria-label="Remove">&#215;</button></span></li>';
@@ -1279,7 +1297,8 @@
     var msg = P.msg;
     if (!msg && chosen.length) {
       var open = chosen.filter(function (q) { return !q.verified; }).length;
-      msg = chosen.length + (chosen.length === 1 ? ' question' : ' questions') + ', about ' + Math.max(1, Math.round(chosen.length * 1.1)) + ' minutes.' +
+      var secs = chosen.reduce(function (a, q) { return a + (Number(q.time_s) || 20) + 25; }, 0);
+      msg = chosen.length + (chosen.length === 1 ? ' question' : ' questions') + ', about ' + Math.max(1, Math.round(secs / 60)) + ' minutes.' +
         (open ? ' ' + open + (open === 1 ? ' has' : ' have') + ' an answer that is not confirmed yet.' : '');
     }
     if (!msg && P.unlinked) msg = 'The quiz in the database has ' + P.unlinked + ' questions that are not in the bank. Saving replaces them.';
@@ -1320,6 +1339,9 @@
     var a = b.getAttribute('data-pk'), id = Number(b.getAttribute('data-id'));
     if (a === 'close') return closePicker();
     if (a === 'save') return pkSave();
+    if (a === 'new') return openEditor(null, false);
+    if (a === 'edit') return openEditor(id, false);
+    if (a === 'dup') return openEditor(id, true);
     P.msg = ''; P.armClose = 0;
     var i = P.sel.indexOf(id);
     if (a === 'toggle') {
@@ -1347,6 +1369,272 @@
   });
   $('pkSearch').addEventListener('input', function (e) { P.search = e.target.value; pkRender(); });
   $('pkAnswers').addEventListener('change', function (e) { P.answers = e.target.checked; pkRender(); });
+
+  // ---------------------------------------------------------------- question editor
+  // Opens in place of the bank list. Saves one question to the bank (host_bank_save).
+  // New questions are added to the quiz being built; Save quiz then puts them in play.
+  var TIMES = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240];
+  var POINTS = [['standard', 'Standard'], ['double', 'Double points'], ['none', 'No points']];
+  var E = { open: false, q: null, start: '', saving: false, msg: '', armDelete: 0, applyAll: false };
+
+  function timeLabel(t) {
+    t = Number(t) || 20;
+    if (t < 60) return t + ' seconds';
+    var m = Math.floor(t / 60), s = t % 60;
+    return (m === 1 ? '1 minute' : m + ' minutes') + (s ? ' ' + s + ' seconds' : '');
+  }
+  function timeShort(t) { t = Number(t) || 20; return t < 60 ? t + ' s' : (t / 60) + ' min'; }
+  function pointsLabel(p) { return p === 'double' ? 'Double points' : p === 'none' ? 'No points' : 'Standard'; }
+
+  function edSnapshot() { return JSON.stringify(E.q); }
+  function edDirty() { return E.open && edSnapshot() !== E.start; }
+
+  function openEditor(id, copy) {
+    var src = id ? pkGet(id) : null;
+    var q = src ? JSON.parse(JSON.stringify(src)) : {
+      id: null, module: P.filter && ['All', 'Answer checked', 'In this quiz'].indexOf(P.filter) < 0 ? P.filter : '',
+      category: '', text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', note: '',
+      verified: false, time_s: 20, points: 'standard'
+    };
+    q.options = pkOptions(q).slice();
+    if (copy) { q.id = null; q.verified = false; }
+    if (q.category === q.module) q.category = '';
+    E.open = true; E.q = q; E.start = edSnapshot(); E.saving = false; E.armDelete = 0; E.applyAll = false;
+    E.msg = copy ? 'This is a copy. Change it, then save it as a new question.' : '';
+    $('pkTools').hidden = true; $('pkList').hidden = true; $('pkEdit').hidden = false;
+    edBuild();
+    var t = $('edText');
+    if (t) t.focus();
+  }
+
+  function closeEditor(force) {
+    if (!E.open) return true;
+    if (!force && edDirty() && !(E.armDelete === -1)) {
+      E.armDelete = -1; // reuse the arm slot: the next Cancel discards
+      E.msg = 'You have unsaved changes. Press Cancel again to throw them away.';
+      edSync();
+      return false;
+    }
+    E.open = false; E.q = null;
+    $('pkEdit').hidden = true; $('pkTools').hidden = false; $('pkList').hidden = false;
+    pkRender();
+    return true;
+  }
+
+  function edAnswers() {
+    var q = E.q;
+    return q.options.map(function (t, i) {
+      return '<div class="ed-ans">' +
+        '<label class="ed-right" title="Mark as the right answer"><input type="radio" name="edRight" value="' + i + '"' +
+        (q.correct_index === i ? ' checked' : '') + '><span>' + Q.LETTERS[i] + '</span></label>' +
+        '<input class="ed-opt" data-i="' + i + '" maxlength="120" autocomplete="off" placeholder="Answer ' + Q.LETTERS[i] +
+        (i > 1 ? ' (optional)' : '') + '" value="' + esc(t) + '" aria-label="Answer ' + Q.LETTERS[i] + '">' +
+        (q.options.length > 2 ? '<button type="button" class="ed-x" data-ed="remove" data-i="' + i + '" aria-label="Remove answer ' + Q.LETTERS[i] + '">&#215;</button>' : '<span></span>') +
+        '</div>';
+    }).join('');
+  }
+
+  function edBuild() {
+    var q = E.q, mods = [];
+    (P.bank || []).forEach(function (b) { if (b.module && mods.indexOf(b.module) < 0) mods.push(b.module); });
+    $('pkEdit').innerHTML =
+      '<div class="ed-head"><h3>' + (q.id ? 'Edit question' : 'New question') + '</h3>' +
+      '<p class="ed-warn">The right answer shows here. Keep the projector off this screen.</p></div>' +
+      '<div class="ed-body">' +
+      '<label class="ed-label" for="edText">Question <span id="edTextN"></span></label>' +
+      '<textarea id="edText" maxlength="200" rows="2" placeholder="Start typing your question">' + esc(q.text) + '</textarea>' +
+      '<div class="ed-row2">' +
+      '  <div><label class="ed-label" for="edModule">Set</label>' +
+      '    <input id="edModule" maxlength="40" list="edModules" autocomplete="off" placeholder="For example Meetup" value="' + esc(q.module) + '">' +
+      '    <datalist id="edModules">' + mods.map(function (m) { return '<option value="' + esc(m) + '">'; }).join('') + '</datalist></div>' +
+      '  <div><label class="ed-label" for="edCategory">Label on the big screen</label>' +
+      '    <input id="edCategory" maxlength="30" autocomplete="off" placeholder="Same as the set" value="' + esc(q.category) + '"></div>' +
+      '</div>' +
+      '<div class="ed-row-head"><span class="ed-label">Answers <small>tick the right one</small></span>' +
+      '  <span><button type="button" class="pk-btn" data-ed="tf">True or false</button>' +
+      '  <button type="button" class="pk-btn" data-ed="add" id="edAdd">Add answer</button></span></div>' +
+      '<div class="ed-answers" id="edAnswers">' + edAnswers() + '</div>' +
+      '<div class="ed-row2">' +
+      '  <div><label class="ed-label" for="edTime">Time limit</label><select id="edTime">' +
+      TIMES.map(function (t) { return '<option value="' + t + '"' + (q.time_s === t ? ' selected' : '') + '>' + timeLabel(t) + '</option>'; }).join('') +
+      '  </select>' +
+      (P.sel.length ? '<label class="ed-check"><input type="checkbox" id="edAll"' + (E.applyAll ? ' checked' : '') + '> Use this time for every question in this quiz</label>' : '') +
+      '  </div>' +
+      '  <div><label class="ed-label" for="edPoints">Points</label><select id="edPoints">' +
+      POINTS.map(function (p) { return '<option value="' + p[0] + '"' + (q.points === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
+      '  </select><p class="ed-hint" id="edPointsHint"></p></div>' +
+      '</div>' +
+      '<label class="ed-label" for="edExpl">Explanation <small>shown after the reveal</small></label>' +
+      '<textarea id="edExpl" maxlength="400" rows="2">' + esc(q.explanation) + '</textarea>' +
+      '<label class="ed-label" for="edNote">Private note <small>only shown in this picker</small></label>' +
+      '<input id="edNote" maxlength="300" autocomplete="off" value="' + esc(q.note) + '">' +
+      '<label class="ed-check"><input type="checkbox" id="edVerified"' + (q.verified ? ' checked' : '') + '> Answer checked</label>' +
+      '</div>' +
+      '<div class="ed-foot"><p class="pk-msg" id="edMsg" role="status"></p><div class="ed-btns">' +
+      (q.id ? '<button type="button" class="pk-btn" data-ed="delete" id="edDelete">Delete</button>' : '') +
+      '<button type="button" class="pk-btn" data-ed="cancel" id="edCancel">Cancel</button>' +
+      '<button type="button" class="primary" data-ed="save" id="edSave">Save question</button></div></div>';
+    edSync();
+  }
+
+  function edSync() {
+    if (!E.open) return;
+    var q = E.q;
+    var n = $('edTextN'); if (n) n.textContent = (200 - q.text.length) + ' left';
+    var add = $('edAdd'); if (add) add.disabled = q.options.length >= 4;
+    var h = $('edPointsHint');
+    if (h) h.textContent = q.points === 'double' ? '500 to 1,000 points become 1,000 to 2,000.' : q.points === 'none' ? 'Counts as right or wrong, but scores nothing.' : '500 to 1,000 points, faster scores more.';
+    var del = $('edDelete');
+    if (del) { var armed = E.armDelete > Date.now(); del.textContent = armed ? 'Delete for good?' : 'Delete'; del.className = 'pk-btn' + (armed ? ' arm' : ''); }
+    $('edMsg').textContent = E.msg;
+    var save = $('edSave');
+    save.disabled = E.saving;
+    save.textContent = E.saving ? 'Saving...' : 'Save question';
+  }
+
+  function edCheck() {
+    var q = E.q;
+    var opts = q.options.map(function (t) { return t.replace(/\s+/g, ' ').trim(); });
+    // Drop empty optional answers (C, D) but keep the right one where it was.
+    var keep = [], right = -1;
+    opts.forEach(function (t, i) {
+      if (t || i < 2) { if (i === q.correct_index) right = keep.length; keep.push(t); }
+    });
+    if (!q.text.trim()) return 'Type the question.';
+    if (!q.module.trim()) return 'Give it a set, for example Meetup.';
+    if (keep.length < 2 || keep.slice(0, 2).some(function (t) { return !t; })) return 'Fill in answers A and B.';
+    if (right < 0 || !keep[right]) return 'Tick the right answer.';
+    return { options: keep, correct_index: right };
+  }
+
+  function edSave() {
+    if (E.saving) return;
+    var c = edCheck();
+    if (typeof c === 'string') { E.msg = c; return edSync(); }
+    var q = E.q, payload = {
+      id: q.id, module: q.module.trim(), category: q.category.trim(), text: q.text.trim(),
+      options: c.options, correct_index: c.correct_index, explanation: q.explanation.trim(),
+      note: q.note.trim(), verified: !!q.verified, time_s: Number(q.time_s), points: q.points
+    };
+    E.saving = true; E.msg = '';
+    edSync();
+    call('host_bank_save', { p_q: payload }).then(function (r) {
+      var note = r.data && r.data.note;
+      if (note !== 'question_saved') {
+        E.saving = false;
+        E.msg = r.network ? 'No connection. Nothing was saved.'
+          : ({ bad_text: 'The question must be 1 to 200 characters.', bad_module: 'The set name must be 1 to 40 characters.',
+               bad_category: 'The label must be 30 characters or fewer.', bad_explanation: 'The explanation or note is too long.',
+               bad_options: 'Each answer must be 1 to 120 characters, with 2 to 4 answers.', bad_correct: 'Tick the right answer.',
+               bad_time: 'Pick a time limit.', bad_points: 'Pick the points.', not_found: 'This question was deleted. Close the editor.' })[note] ||
+            (r.error && /find the function|does not exist/i.test(r.error)
+              ? 'The editor is not switched on in Supabase yet. Run migrations/question_editor.sql in the SQL editor.'
+              : 'Could not save' + (r.error ? ': ' + r.error : '.'));
+        return edSync();
+      }
+      var saved = r.data.question, isNew = !q.id, i;
+      for (i = 0; i < P.bank.length; i++) if (P.bank[i].id === saved.id) break;
+      if (i < P.bank.length) P.bank[i] = saved; else P.bank.push(saved);
+      var msg = isNew ? 'Question added.' : 'Question saved.';
+      if (isNew && P.sel.length < 40) { P.sel.push(saved.id); msg = 'Question added to your quiz. Press Save quiz to use it.'; }
+      if (r.data.quiz_updated) { loadQuestions(); msg = 'Question saved. The quiz uses the new version.'; }
+      var after = Promise.resolve();
+      if (E.applyAll && P.sel.length) {
+        var ids = P.sel.slice(), t = saved.time_s;
+        after = call('host_bank_set_time', { p_ids: ids, p_time: t }).then(function (x) {
+          if (x.data && x.data.note === 'time_set') {
+            P.bank.forEach(function (b) { if (ids.indexOf(b.id) >= 0) b.time_s = t; });
+            loadQuestions();
+            msg += ' Every question in the quiz now has ' + timeLabel(t) + '.';
+          } else msg += ' The time could not be applied to the other questions.';
+        });
+      }
+      after.then(function () {
+        E.saving = false;
+        closeEditor(true);
+        P.msg = msg;
+        P.openId = saved.id;
+        pkRender();
+        if (H.lastKey && game() && game().status === 'lobby') { H.lastHtml = ''; render(); }
+      });
+    });
+  }
+
+  function edDelete() {
+    var q = E.q;
+    if (!q || !q.id || E.saving) return;
+    if (!(E.armDelete > Date.now())) {
+      E.armDelete = Date.now() + 4000;
+      E.msg = 'Press Delete again to remove this question from the bank.';
+      edSync();
+      setTimeout(edSync, 4100);
+      return;
+    }
+    E.saving = true; edSync();
+    call('host_bank_delete', { p_id: q.id }).then(function (r) {
+      E.saving = false;
+      var note = r.data && r.data.note;
+      if (note !== 'question_deleted' && note !== 'not_found') {
+        E.msg = r.network ? 'No connection. Nothing was deleted.' : 'Could not delete' + (r.error ? ': ' + r.error : '.');
+        return edSync();
+      }
+      var id = q.id, wasSaved = P.saved.indexOf(id) >= 0;
+      P.bank = P.bank.filter(function (b) { return b.id !== id; });
+      // P.saved keeps the id, so the quiz counts as changed and Save quiz drops the copy.
+      P.sel = P.sel.filter(function (x) { return x !== id; });
+      closeEditor(true);
+      P.msg = wasSaved ? 'Deleted from the bank. Press Save quiz to take it out of the quiz too.' : 'Deleted from the bank.';
+      pkRender();
+    });
+  }
+
+  $('pkEdit').addEventListener('input', function (e) {
+    if (!E.open) return;
+    var t = e.target, q = E.q;
+    if (t.id === 'edText') q.text = t.value;
+    else if (t.id === 'edModule') q.module = t.value;
+    else if (t.id === 'edCategory') q.category = t.value;
+    else if (t.id === 'edExpl') q.explanation = t.value;
+    else if (t.id === 'edNote') q.note = t.value;
+    else if (t.classList.contains('ed-opt')) q.options[Number(t.getAttribute('data-i'))] = t.value;
+    if (E.armDelete === -1) E.armDelete = 0;
+    E.msg = '';
+    edSync();
+  });
+  $('pkEdit').addEventListener('change', function (e) {
+    if (!E.open) return;
+    var t = e.target, q = E.q;
+    if (t.name === 'edRight') q.correct_index = Number(t.value);
+    else if (t.id === 'edTime') q.time_s = Number(t.value);
+    else if (t.id === 'edPoints') q.points = t.value;
+    else if (t.id === 'edVerified') q.verified = t.checked;
+    else if (t.id === 'edAll') E.applyAll = t.checked;
+    E.msg = '';
+    edSync();
+  });
+  $('pkEdit').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ed]');
+    if (!b || b.disabled || !E.open) return;
+    var a = b.getAttribute('data-ed'), q = E.q;
+    if (a === 'save') return edSave();
+    if (a === 'cancel') return closeEditor();
+    if (a === 'delete') return edDelete();
+    if (a === 'add' && q.options.length < 4) q.options.push('');
+    else if (a === 'remove' && q.options.length > 2) {
+      var i = Number(b.getAttribute('data-i'));
+      q.options.splice(i, 1);
+      if (q.correct_index === i) q.correct_index = 0;
+      else if (q.correct_index > i) q.correct_index--;
+    }
+    else if (a === 'tf') { q.options = ['True', 'False']; if (q.correct_index > 1) q.correct_index = 0; }
+    E.msg = '';
+    $('edAnswers').innerHTML = edAnswers();
+    edSync();
+  });
+  $('pkEdit').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); edSave(); }
+  });
+
 
   // ---------------------------------------------------------------- setup: event name and teams
   // Saved on the game row, so the big screen and every phone show the same
@@ -1641,7 +1929,7 @@
   document.addEventListener('pointerdown', function () { sfx.unlock(); }, true);
   document.addEventListener('keydown', function () { sfx.unlock(); }, true);
   document.addEventListener('keydown', function (e) {
-    if (P.open) { if (e.key === 'Escape') closePicker(); return; }
+    if (P.open) { if (e.key === 'Escape') { if (E.open) closeEditor(); else closePicker(); } return; }
     if (S.open) { if (e.key === 'Escape') closeSetup(); return; }
     if (!H.unlocked || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     var t = e.target;

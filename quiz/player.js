@@ -414,7 +414,9 @@
     else if (st.sendError) status = '<p class="status-line error">' + Q.esc(st.sendError) + '</p>';
     return '' +
       '<div class="qhead"><span class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions +
-      (g.category ? ' · ' + Q.esc(g.category) : '') + '</span><span class="timer" id="timer"></span></div>' +
+      (g.category ? ' · ' + Q.esc(g.category) : '') +
+      (g.points === 'double' ? ' · <b class="pts-tag">Double points</b>' : g.points === 'none' ? ' · <b class="pts-tag none">No points</b>' : '') +
+      '</span><span class="timer" id="timer"></span></div>' +
       '<div class="bar"><i id="bar"></i></div>' +
       '<p class="stake" id="stake"></p>' +
       '<p class="qtext">' + Q.esc(g.question_text) + '</p>' +
@@ -576,15 +578,17 @@
     }
     t.textContent = g.paused_at ? 'Paused' : String(shown);
     t.className = 'timer' + (hurry ? ' low' : '');
-    // Points still up for grabs: 500 + 500 x time left, the same formula the server scores with.
+    // Points still up for grabs: 500 + 500 x time left, times the question's points
+    // setting (double or none), the same formula the server scores with.
     var stake = document.getElementById('stake');
     if (stake) {
       var sHtml = '', sCls = 'stake';
       if (g.card_mode) sHtml = '';
       else if (mine) { sHtml = '<b>Locked in</b> fingers crossed'; sCls += ' locked'; }
+      else if (left > 0 && g.points === 'none') sHtml = '<b>Just for fun</b> no points on this one';
       else if (left > 0) {
-        var pts = 500 + Math.round(500 * Math.min(1, left / (g.duration_s || 20)));
-        sHtml = '<b>+' + pts + '</b> up for grabs';
+        var pts = (500 + Math.round(500 * Math.min(1, left / (g.duration_s || 20)))) * (g.points === 'double' ? 2 : 1);
+        sHtml = '<b>+' + Q.num(pts) + '</b> up for grabs' + (g.points === 'double' ? ' · double' : '');
         if (shown <= 5) sCls += ' low';
       }
       if (stake.innerHTML !== sHtml) stake.innerHTML = sHtml;

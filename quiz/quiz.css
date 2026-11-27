@@ -305,3 +305,7 @@ body.hurry::after { animation: heart-glow 1s ease-out infinite; }
   body:not(.host) .timer.low, body:not(.host) .pulse i, body:not(.host) .pulse b, body:not(.host) .dots i { animation: none; }
   body:not(.host) .pulse i { opacity: .35; }
 }
+
+/* Double or no points on this question */
+.qmeta .pts-tag { color: #F3CA94; font-weight: 700; }
+.qmeta .pts-tag.none { color: inherit; opacity: .8; }

@@ -44,6 +44,16 @@ If you forget the questions file, the host page says "No questions loaded" and t
 
 If the database was created before the bank existed, run `migrations/question_bank.sql` once first. It adds the bank without touching players, scores or the PIN.
 
+### Writing and editing questions
+
+In the picker, press **New question**, or click a question and press **Edit** or **Duplicate**. Set the question, two to four answers (tick the right one, or press **True or false**), the label shown on the big screen, the time limit (5 seconds to 4 minutes), the points (Standard, Double points or No points), an explanation for after the reveal and a private note. Tick **Answer checked** once you have checked the answer. **Delete** takes two clicks.
+
+A new question goes straight into the quiz you are building; press **Save quiz** to put it in play. Editing a question that is already in the saved quiz updates the quiz too, as long as the game is in the lobby. **Use this time for every question in this quiz** sets one time limit for the whole quiz. The editor shows the right answer, so keep the projector off the laptop screen while you use it.
+
+Points: a right answer scores 500 to 1,000 (faster scores more). Double points doubles that. No points still shows who was right but adds nothing. Card mode awards stay at 100 a team.
+
+Questions you write here live in the database. Running `bank.local.sql` again puts its own 45 questions back as written in the file (overwriting edits to those), but keeps your new questions and the time and points you set. If the database was created before the editor existed, run `migrations/question_editor.sql` once first.
+
 ### Event name and teams
 
 On the host page, in the lobby, press **Setup**. Type the event name (it shows at the top of the big screen and on the phone join page) and edit the teams: rename them, remove them or press **Add a team**. You can have 2 to 20 teams. Press **Save**. A team that already has players is locked, so set the teams before people join, or remove those players first. With more than eight teams the leaderboard shows the top eight; the final screen shows them all.
@@ -141,7 +151,7 @@ Press **Reset game** twice. This deletes all players, answers and card points an
 
 ## Scoring
 
-- Correct: `500 + round(500 * (1 - seconds / 20))`, so 1000 for an instant answer and at least 500. Wrong or no answer: 0.
+- Correct: `500 + round(500 * (1 - seconds / time limit))`, so 1000 for an instant answer and at least 500. Double points questions score twice that; No points questions score 0. Wrong or no answer: 0.
 - Time is measured with the database clock, not the phone's.
 - One answer per player per question. Answers after 21 seconds (20 plus 1 second grace) or after the reveal are rejected.
 - Group score = average of the members' totals (players who never answered count as 0) + 100 per card-mode award. Ties go to the group with more correct answers.

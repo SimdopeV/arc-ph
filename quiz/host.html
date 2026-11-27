@@ -17,7 +17,6 @@
 <header class="top">
   <div class="brand">
     <img class="logo" src="Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
-    <span class="pill">Prompt · Debug · Deploy</span>
   </div>
   <div class="event" id="eventName">Community Meetup</div>
   <div class="conn">
@@ -68,11 +67,15 @@
     </header>
     <div class="pk-body">
       <section class="pk-bank">
-        <div class="pk-tools">
-          <input id="pkSearch" type="search" placeholder="Search the bank" autocomplete="off" aria-label="Search the bank">
+        <div class="pk-tools" id="pkTools">
+          <div class="pk-search-row">
+            <input id="pkSearch" type="search" placeholder="Search the bank" autocomplete="off" aria-label="Search the bank">
+            <button type="button" class="primary pk-new" data-pk="new">New question</button>
+          </div>
           <div class="pk-filters" id="pkFilters"></div>
         </div>
         <div class="pk-list" id="pkList"></div>
+        <div class="pk-edit" id="pkEdit" hidden></div>
       </section>
       <aside class="pk-quiz">
         <div class="pk-quiz-head">
@@ -121,7 +124,6 @@
   <form class="gate-card" id="gateForm" autocomplete="off">
     <div class="brand">
       <img class="logo" src="Arc_Logo_White.svg" alt="Arc" onerror="this.outerHTML='<span class=logo-text>Arc</span>'">
-      <span class="pill">Prompt · Debug · Deploy</span>
     </div>
     <h1>Quiz host</h1>
     <label class="label" for="pin">Host PIN</label>
