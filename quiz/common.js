@@ -15,7 +15,18 @@
     if (Array.isArray(t) && t.length) Q.GROUPS = t.map(String);
     if (g.event_name) Q.EVENT = String(g.event_name);
   };
-  Q.LETTERS = ['A', 'B', 'C', 'D'];
+  Q.LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  // Every right answer of a revealed question (one, or several for multi-select).
+  Q.rightSet = function (g) {
+    if (!g) return [];
+    var s = g.revealed_set;
+    if (typeof s === 'string') { try { s = JSON.parse(s.replace('{', '[').replace('}', ']')); } catch (e) { s = null; } }
+    if (Array.isArray(s) && s.length) return s.map(Number);
+    return g.revealed_index == null ? [] : [Number(g.revealed_index)];
+  };
+  Q.joinAnd = function (list) {
+    return list.length < 2 ? list.join('') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  };
   Q.configured = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY &&
     cfg.SUPABASE_URL.indexOf('YOUR-') < 0 && cfg.SUPABASE_ANON_KEY.indexOf('YOUR-') < 0);
 

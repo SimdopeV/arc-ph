@@ -18,6 +18,8 @@
   --tile-b: #F3966F; --tile-b-ink: #0f1a30;
   --tile-c: #942753; --tile-c-ink: #ffffff;
   --tile-d: #F3CA94; --tile-d-ink: #0f1a30;
+  --tile-e: #5B3E9E; --tile-e-ink: #ffffff;
+  --tile-f: #1F8A8A; --tile-f-ink: #ffffff;
   --good: #3ccf91;
   --bad: #ff6b6b;
   --font-body: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -103,6 +105,8 @@ body.hurry::after { animation: heart-glow 1s ease-out infinite; }
 .tile.t1 { --t: var(--tile-b); --ti: var(--tile-b-ink); }
 .tile.t2 { --t: var(--tile-c); --ti: var(--tile-c-ink); }
 .tile.t3 { --t: var(--tile-d); --ti: var(--tile-d-ink); }
+.tile.t4 { --t: var(--tile-e); --ti: var(--tile-e-ink); }
+.tile.t5 { --t: var(--tile-f); --ti: var(--tile-f-ink); }
 .badge {
   font-family: var(--font-mono); font-weight: 500;
   display: inline-grid; place-items: center; flex: none;
@@ -309,3 +313,16 @@ body.hurry::after { animation: heart-glow 1s ease-out infinite; }
 /* Double or no points on this question */
 .qmeta .pts-tag { color: #F3CA94; font-weight: 700; }
 .qmeta .pts-tag.none { color: inherit; opacity: .8; }
+
+/* Five or six answers: two columns on the phone */
+.answers.many { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.answers.many .answer { min-height: 76px; padding: 12px; font-size: 16px; gap: 10px; }
+/* Multi-select: ticked answers, then Submit */
+.answers.multi .answer.ticked { box-shadow: 0 0 0 4px #fff inset, 0 0 22px rgba(243, 202, 148, .55); transform: scale(.98); }
+.answers.multi .answer.ticked .badge { background: #fff; color: #0f1a30; }
+.multi-go { margin-top: 4px; }
+.multi-go:disabled { opacity: .55; }
+.reveal-answer + .reveal-answer { margin-top: 8px; }
+/* Long question labels wrap instead of pushing the timer off screen */
+.qhead .qmeta { flex: 1; min-width: 0; }
+.qhead .timer { flex: none; }

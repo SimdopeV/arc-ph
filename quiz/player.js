@@ -13,6 +13,7 @@
     player: null,
     game: null,
     choice: null, choiceIdx: null,
+    ticks: [], tickIdx: null,   // multi-select: answers ticked but not sent yet
     lock: null,          // 'sending' | 'locked' | 'late' for question choiceIdx
     sendError: '',
     result: null,
@@ -81,7 +82,8 @@
       st.player = d.player;
       takeGame(d.game, true);
       if (d.choice != null && st.game) {
-        st.choice = d.choice; st.choiceIdx = st.game.current_index; st.lock = 'locked';
+        st.choice = st.game.multi && d.choices ? d.choices : d.choice;
+        st.choiceIdx = st.game.current_index; st.lock = 'locked';
       }
       if (d.total != null) st.total = d.total;
       st.result = d.result || st.result;
@@ -107,6 +109,7 @@
     if (row.current_index !== st.choiceIdx) {
       st.choice = null; st.choiceIdx = null; st.lock = null; st.sendError = '';
     }
+    if (row.current_index !== st.tickIdx) { st.ticks = []; st.tickIdx = row.current_index; }
     if (row.status === 'lobby') { st.hist = null; Q.local.del(HKEY); st.shownRes = null; st.shownFinal = false; }
     if (fromSync) return true;
     var s = row.status;
@@ -187,11 +190,27 @@
     });
   }
 
+  function picked_(i) { return Array.isArray(st.choice) ? st.choice.indexOf(i) >= 0 : st.choice === i; }
+
+  // Multi-select: tapping an answer ticks or unticks it; Submit sends them all.
+  function toggleTick(i) {
+    var g = st.game;
+    if (!g || g.status !== 'question' || st.lock === 'sending' || st.lock === 'locked') return;
+    if (st.tickIdx !== g.current_index) { st.ticks = []; st.tickIdx = g.current_index; }
+    var k = st.ticks.indexOf(i);
+    if (k >= 0) st.ticks.splice(k, 1); else st.ticks.push(i);
+    st.ticks.sort();
+    buzz(8);
+    render();
+  }
+
   function answer(i) {
     var g = st.game;
     if (!g || g.status !== 'question' || st.lock === 'sending' || st.lock === 'locked') return;
     var idx = g.current_index;
-    st.choice = i; st.choiceIdx = idx; st.lock = 'sending'; st.sendError = '';
+    var many = Array.isArray(i);
+    if (many && !i.length) return;
+    st.choice = many ? i.slice() : i; st.choiceIdx = idx; st.lock = 'sending'; st.sendError = '';
     wakeLock();
     buzz(14);
     render();
@@ -200,7 +219,10 @@
     var tries = 0;
     (function send() {
       tries++;
-      Q.rpc('submit_answer', { p_player: st.playerId, p_question_idx: idx, p_choice: i }, 6000).then(function (r) {
+      var call = many
+        ? Q.rpc('submit_answers', { p_player: st.playerId, p_question_idx: idx, p_choices: i }, 6000)
+        : Q.rpc('submit_answer', { p_player: st.playerId, p_question_idx: idx, p_choice: i }, 6000);
+      call.then(function (r) {
         if (!st.game || st.game.current_index !== idx) return;
         if (!r.error || r.error === 'duplicate') { st.lock = 'locked'; st.netOk = true; }
         else if (r.network && tries < 4) { setTimeout(send, 400 * tries); return; }
@@ -307,7 +329,7 @@
       if (st.choiceIdx === idx && st.lock === 'locked') return 'locked:' + idx + ':' + st.choice;
       if (st.choiceIdx === idx && st.lock === 'sending') return 'sending:' + idx + ':' + st.choice;
       if (st.lock === 'late' || Q.remaining(g) <= 0) return 'late:' + idx;
-      return 'open:' + idx + ':' + st.sendError;
+      return 'open:' + idx + ':' + st.sendError + ':' + (st.tickIdx === idx ? st.ticks.join('') : '');
     }
     if (g.status === 'reveal' || g.status === 'leaderboard') {
       var have = st.result && st.result.question_idx === idx ? 'y' : 'n';
@@ -399,9 +421,11 @@
     var o = opts(g);
     var locked = st.choiceIdx === idx && (st.lock === 'locked' || st.lock === 'sending');
     var late = !locked && (st.lock === 'late' || Q.remaining(g) <= 0);
-    var cls = (g.card_mode ? 'static' : (locked || late ? 'locked' : '')) + (o.length === 2 ? ' two' : '');
+    var cls = (g.card_mode ? 'static' : (locked || late ? 'locked' : '')) + (o.length === 2 ? ' two' : o.length > 4 ? ' many' : '') +
+      (g.multi ? ' multi' : '');
+    var ticks = st.tickIdx === idx ? st.ticks : [];
     var buttons = o.map(function (text, i) {
-      var picked = locked && st.choice === i ? ' picked' : '';
+      var picked = (locked && picked_(i) ? ' picked' : '') + (!locked && g.multi && ticks.indexOf(i) >= 0 ? ' ticked' : '');
       var dis = g.card_mode || locked || late ? ' disabled' : '';
       return '<button type="button" class="answer tile t' + i + picked + '" data-choice="' + i + '"' + dis + '>' +
         '<span class="badge">' + letter(i) + '</span><span>' + Q.esc(text) + '</span></button>';
@@ -412,10 +436,15 @@
     else if (locked) status = '<p class="status-line">Answer locked. Waiting for everyone.</p>';
     else if (late) status = '<p class="status-line">Time\'s up.</p>';
     else if (st.sendError) status = '<p class="status-line error">' + Q.esc(st.sendError) + '</p>';
+    if (g.multi && !g.card_mode && !locked && !late) {
+      status = '<button type="button" class="primary multi-go" id="multiGo"' + (ticks.length ? '' : ' disabled') + '>' +
+        (ticks.length ? 'Submit ' + ticks.length + (ticks.length === 1 ? ' answer' : ' answers') : 'Tick every right answer') + '</button>' + status;
+    }
     return '' +
       '<div class="qhead"><span class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions +
       (g.category ? ' · ' + Q.esc(g.category) : '') +
       (g.points === 'double' ? ' · <b class="pts-tag">Double points</b>' : g.points === 'none' ? ' · <b class="pts-tag none">No points</b>' : '') +
+      (g.multi ? ' · <b class="pts-tag">Pick all that apply</b>' : '') +
       '</span><span class="timer" id="timer"></span></div>' +
       '<div class="bar"><i id="bar"></i></div>' +
       '<p class="stake" id="stake"></p>' +
@@ -424,10 +453,12 @@
   }
 
   function revealedBox(g) {
-    var o = opts(g), r = g.revealed_index;
-    if (r == null || !o[r]) return '';
-    return '<div><p class="label">Right answer</p>' +
-      '<div class="reveal-answer tile t' + r + '"><span class="badge">' + letter(r) + '</span><span>' + Q.esc(o[r]) + '</span></div></div>' +
+    var o = opts(g), set = Q.rightSet(g).filter(function (r) { return o[r] != null; });
+    if (!set.length) return '';
+    return '<div><p class="label">' + (set.length > 1 ? 'Right answers' : 'Right answer') + '</p>' +
+      set.map(function (r) {
+        return '<div class="reveal-answer tile t' + r + '"><span class="badge">' + letter(r) + '</span><span>' + Q.esc(o[r]) + '</span></div>';
+      }).join('') + '</div>' +
       (g.explanation ? '<p class="explain">' + Q.esc(g.explanation) + '</p>' : '');
   }
 
@@ -461,10 +492,11 @@
         if (res.points >= 900) chips += '<span class="chip-s">Lightning fast</span>';
         else if (res.points >= 800) chips += '<span class="chip-s">Quick</span>';
       }
-      top = '<div class="card result ' + (res.is_correct ? 'good' : 'bad') + '">' +
-        '<div class="mark">' + (res.is_correct ? ICON.check : ICON.cross) + '</div>' +
-        '<p class="verdict">' + (res.is_correct ? 'Correct' : 'Not quite') + '</p>' +
-        '<p class="banter">' + banter(res.is_correct ? 'good' : 'bad', idx) + '</p>' +
+      var part = !res.is_correct && res.points > 0;  // multi-select: some right answers, no wrong ones
+      top = '<div class="card result ' + (res.is_correct || part ? 'good' : 'bad') + '">' +
+        '<div class="mark">' + (res.is_correct || part ? ICON.check : ICON.cross) + '</div>' +
+        '<p class="verdict">' + (res.is_correct ? 'Correct' : part ? 'Partly right' : 'Not quite') + '</p>' +
+        '<p class="banter">' + (part ? 'Some of them. Partial points banked.' : banter(res.is_correct ? 'good' : 'bad', idx)) + '</p>' +
         '<p class="points">+<span id="pts">' + Q.num(res.points) + '</span> points</p>' +
         '<div class="chips">' + chips + '</div>' +
         '<p class="total">Total ' + Q.num(st.total) + '</p></div>';
@@ -554,8 +586,13 @@
     }
     if (kind === 'open') {
       Array.prototype.forEach.call(document.querySelectorAll('.answer'), function (b) {
-        b.addEventListener('click', function () { answer(Number(b.getAttribute('data-choice'))); });
+        b.addEventListener('click', function () {
+          var i = Number(b.getAttribute('data-choice'));
+          if (st.game && st.game.multi) toggleTick(i); else answer(i);
+        });
       });
+      var go = document.getElementById('multiGo');
+      if (go) go.addEventListener('click', function () { answer((st.ticks || []).slice()); });
     }
     if (kind === 'res') celebrateResult();
     if (kind === 'final') celebrateFinal();

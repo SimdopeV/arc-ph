@@ -57,6 +57,7 @@
         duration_s: (q && q.time_s) || 20, points: (q && q.points) || 'standard', category: q ? q.category : null, question_text: q ? q.text : null,
         options: q ? q.options : null, started_at: c.started_at, paused_at: c.paused_at,
         revealed_index: shown && q ? q.correct_index : null, explanation: shown && q ? q.explanation : null,
+        revealed_set: shown && q ? (q.correct_set || [q.correct_index]) : null, multi: !!(q && q.multi),
         card_mode: true
       };
     }
@@ -611,7 +612,8 @@
 
   function cardButtons(g) {
     var picked = (H.card.awards[g.current_index] || []);
-    return '<p class="card-hint">Click each team that held up <b>' + Q.LETTERS[g.revealed_index] + '</b>. 100 points each.</p>' +
+    var letters = Q.rightSet(g).map(function (i) { return Q.LETTERS[i]; });
+    return '<p class="card-hint">Click each team that held up <b>' + Q.joinAnd(letters) + '</b>. 100 points each.</p>' +
       '<div' + stripAttr() + '>' + Q.GROUPS.map(function (name) {
         var on = picked.indexOf(name) >= 0;
         return '<button type="button" class="gs" data-award="' + esc(name) + '" aria-pressed="' + on + '">' +
@@ -621,8 +623,11 @@
 
   // Share of phone answers that were right, or null when there is nothing to show.
   function pctRight(g) {
-    var dist = g.card_mode ? null : (H.view && H.view.distribution);
-    if (!dist || g.revealed_index == null) return null;
+    var v = H.view;
+    if (g.card_mode || !v || g.revealed_index == null) return null;
+    if (v.right_in != null) return v.answers_in ? Math.round(v.right_in / v.answers_in * 100) : null;
+    var dist = v.distribution; // older server: one answer each
+    if (!dist) return null;
     var total = dist.reduce(function (a, b) { return a + b; }, 0);
     return total ? Math.round((dist[g.revealed_index] || 0) / total * 100) : null;
   }
@@ -632,8 +637,9 @@
     var revealed = g.status !== 'question';
     var dist = !revealed || g.card_mode ? null : (H.view && H.view.distribution);
     var totalVotes = dist ? dist.reduce(function (a, b) { return a + b; }, 0) : 0;
+    var rightSet = Q.rightSet(g);
     var tiles = o.map(function (t, i) {
-      var cls = 'htile tile t' + i + (revealed ? (i === g.revealed_index ? ' right' : ' dim') : '');
+      var cls = 'htile tile t' + i + (revealed ? (rightSet.indexOf(i) >= 0 ? ' right' : ' dim') : '');
       var bar = '';
       if (dist) {
         var pct = totalVotes ? Math.round(dist[i] / totalVotes * 100) : 0;
@@ -663,10 +669,11 @@
       '  <div class="q-meta"><span class="num">Question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</span>' +
       (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') +
       (g.points === 'double' ? '<span class="pts double">Double points</span>' : g.points === 'none' ? '<span class="pts none">No points</span>' : '') +
+      (g.multi ? '<span class="pts multi">' + (revealed ? rightSet.length + ' right answers' : 'Tick every right answer') + '</span>' : '') +
       chip + '</div>' +
       '  <h1 class="q-text">' + esc(g.question_text) + '</h1>' +
       '</div>' + (revealed ? '' : ring()) + '</div>' +
-      '<div class="tiles">' + tiles + '</div>' + foot +
+      '<div class="tiles' + (o.length > 4 ? ' many' : '') + '">' + tiles + '</div>' + foot +
       '</section>';
   }
 
@@ -983,15 +990,18 @@
         var last = g.total_questions > 1 && g.current_index + 1 === g.total_questions;
         voice.say((last ? 'Final question. ' : 'Question ' + (g.current_index + 1) + '. ') +
           (g.points === 'double' ? 'Double points! ' : g.points === 'none' ? 'Just for fun, no points. ' : '') +
+          (g.multi ? 'More than one right answer. ' : '') +
           (g.question_text || ''), true);
       }
     } else if (g.status === 'reveal') {
       if (!loud) return;
       sfx.reveal();
-      var o = opts(g), i = g.revealed_index;
-      if (i == null || !o[i]) return;
+      var o = opts(g), set = Q.rightSet(g).filter(function (k) { return o[k] != null; });
+      if (!set.length) return;
       var right = pctRight(g);
-      var line = 'The answer is ' + (o.length > 2 ? Q.LETTERS[i] + '. ' : '') + o[i] + '.';
+      var line = set.length > 1
+        ? 'The right answers are ' + Q.joinAnd(set.map(function (k) { return Q.LETTERS[k] + ', ' + o[k]; })) + '.'
+        : 'The answer is ' + (o.length > 2 ? Q.LETTERS[set[0]] + '. ' : '') + o[set[0]] + '.';
       if (g.card_mode) line += ' Cards up!';
       else if (right !== null) line += right >= 80 ? ' Sharp room!' : right <= 25 ? ' Ouch. That one stung.' : ' ' + right + ' percent got it.';
       voice.say(line, true);
@@ -1220,7 +1230,9 @@
 
   function pkRow(q) {
     var pos = P.sel.indexOf(q.id), on = pos >= 0, o = pkOptions(q);
-    var kind = o.length === 2 && /^true$/i.test(o[0]) && /^false$/i.test(o[1]) ? 'True or false' : o.length + ' options';
+    var kind = o.length === 2 && /^true$/i.test(o[0]) && /^false$/i.test(o[1]) ? 'True or false'
+      : (q.multi ? 'Multi-select · ' : '') + o.length + ' options';
+    var rightSet = q.multi && q.correct_set ? q.correct_set : [q.correct_index];
     var tags = '<span class="tag">' + esc(q.module) + '</span>' +
       (q.category && q.module.toLowerCase().indexOf(String(q.category).toLowerCase()) < 0 ? '<span class="tag">' + esc(q.category) + '</span>' : '') +
       '<span class="tag">' + kind + '</span>' +
@@ -1230,7 +1242,7 @@
     var more = '';
     if (P.openId === q.id) {
       more = '<ol class="pk-opts">' + o.map(function (t, i) {
-        return '<li class="' + (P.answers && i === q.correct_index ? 'right' : '') + '"><i>' + Q.LETTERS[i] + '</i><span>' + esc(t) + '</span></li>';
+        return '<li class="' + (P.answers && rightSet.indexOf(i) >= 0 ? 'right' : '') + '"><i>' + Q.LETTERS[i] + '</i><span>' + esc(t) + '</span></li>';
       }).join('') + '</ol>' +
         (q.note ? '<p class="pk-note">' + esc(q.note) + '</p>' : '') +
         (P.answers && q.explanation ? '<p class="pk-expl">' + esc(q.explanation) + '</p>' : '') +
@@ -1395,6 +1407,9 @@
       verified: false, time_s: 20, points: 'standard'
     };
     q.options = pkOptions(q).slice();
+    q.multi = !!q.multi;
+    q.right = q.multi && q.correct_set && q.correct_set.length ? q.correct_set.slice() : [q.correct_index || 0];
+    delete q.correct_set; delete q.correct_index;
     if (copy) { q.id = null; q.verified = false; }
     if (q.category === q.module) q.category = '';
     E.open = true; E.q = q; E.start = edSnapshot(); E.saving = false; E.armDelete = 0; E.applyAll = false;
@@ -1423,8 +1438,8 @@
     var q = E.q;
     return q.options.map(function (t, i) {
       return '<div class="ed-ans">' +
-        '<label class="ed-right" title="Mark as the right answer"><input type="radio" name="edRight" value="' + i + '"' +
-        (q.correct_index === i ? ' checked' : '') + '><span>' + Q.LETTERS[i] + '</span></label>' +
+        '<label class="ed-right" title="Mark as a right answer"><input type="' + (q.multi ? 'checkbox' : 'radio') + '" name="edRight" value="' + i + '"' +
+        (q.right.indexOf(i) >= 0 ? ' checked' : '') + '><span>' + Q.LETTERS[i] + '</span></label>' +
         '<input class="ed-opt" data-i="' + i + '" maxlength="120" autocomplete="off" placeholder="Answer ' + Q.LETTERS[i] +
         (i > 1 ? ' (optional)' : '') + '" value="' + esc(t) + '" aria-label="Answer ' + Q.LETTERS[i] + '">' +
         (q.options.length > 2 ? '<button type="button" class="ed-x" data-ed="remove" data-i="' + i + '" aria-label="Remove answer ' + Q.LETTERS[i] + '">&#215;</button>' : '<span></span>') +
@@ -1448,8 +1463,10 @@
       '  <div><label class="ed-label" for="edCategory">Label on the big screen</label>' +
       '    <input id="edCategory" maxlength="30" autocomplete="off" placeholder="Same as the set" value="' + esc(q.category) + '"></div>' +
       '</div>' +
-      '<div class="ed-row-head"><span class="ed-label">Answers <small>tick the right one</small></span>' +
-      '  <span><button type="button" class="pk-btn" data-ed="tf">True or false</button>' +
+      '<div class="ed-row-head"><span class="ed-label">Answers <small id="edRightHint"></small></span>' +
+      '  <span><select id="edMulti" aria-label="Answer options"><option value="0"' + (q.multi ? '' : ' selected') + '>Single answer</option>' +
+      '<option value="1"' + (q.multi ? ' selected' : '') + '>Multi-select</option></select>' +
+      '  <button type="button" class="pk-btn" data-ed="tf">True or false</button>' +
       '  <button type="button" class="pk-btn" data-ed="add" id="edAdd">Add answer</button></span></div>' +
       '<div class="ed-answers" id="edAnswers">' + edAnswers() + '</div>' +
       '<div class="ed-row2">' +
@@ -1479,7 +1496,8 @@
     if (!E.open) return;
     var q = E.q;
     var n = $('edTextN'); if (n) n.textContent = (200 - q.text.length) + ' left';
-    var add = $('edAdd'); if (add) add.disabled = q.options.length >= 4;
+    var add = $('edAdd'); if (add) add.disabled = q.options.length >= 6;
+    var rh = $('edRightHint'); if (rh) rh.textContent = q.multi ? 'tick every right answer' : 'tick the right one';
     var h = $('edPointsHint');
     if (h) h.textContent = q.points === 'double' ? '500 to 1,000 points become 1,000 to 2,000.' : q.points === 'none' ? 'Counts as right or wrong, but scores nothing.' : '500 to 1,000 points, faster scores more.';
     var del = $('edDelete');
@@ -1493,16 +1511,17 @@
   function edCheck() {
     var q = E.q;
     var opts = q.options.map(function (t) { return t.replace(/\s+/g, ' ').trim(); });
-    // Drop empty optional answers (C, D) but keep the right one where it was.
-    var keep = [], right = -1;
+    // Drop empty optional answers (C to F) and move the ticks with the answers that stay.
+    var keep = [], right = [];
     opts.forEach(function (t, i) {
-      if (t || i < 2) { if (i === q.correct_index) right = keep.length; keep.push(t); }
+      if (t || i < 2) { if (q.right.indexOf(i) >= 0 && t) right.push(keep.length); keep.push(t); }
     });
     if (!q.text.trim()) return 'Type the question.';
     if (!q.module.trim()) return 'Give it a set, for example Meetup.';
     if (keep.length < 2 || keep.slice(0, 2).some(function (t) { return !t; })) return 'Fill in answers A and B.';
-    if (right < 0 || !keep[right]) return 'Tick the right answer.';
-    return { options: keep, correct_index: right };
+    if (!right.length) return q.multi ? 'Tick at least one right answer.' : 'Tick the right answer.';
+    if (q.multi && right.length === keep.length) return 'Leave at least one wrong answer.';
+    return { options: keep, correct: right };
   }
 
   function edSave() {
@@ -1511,7 +1530,8 @@
     if (typeof c === 'string') { E.msg = c; return edSync(); }
     var q = E.q, payload = {
       id: q.id, module: q.module.trim(), category: q.category.trim(), text: q.text.trim(),
-      options: c.options, correct_index: c.correct_index, explanation: q.explanation.trim(),
+      options: c.options, correct_index: c.correct[0], correct: c.correct, multi: !!q.multi && c.correct.length > 0,
+      explanation: q.explanation.trim(),
       note: q.note.trim(), verified: !!q.verified, time_s: Number(q.time_s), points: q.points
     };
     E.saving = true; E.msg = '';
@@ -1602,7 +1622,17 @@
   $('pkEdit').addEventListener('change', function (e) {
     if (!E.open) return;
     var t = e.target, q = E.q;
-    if (t.name === 'edRight') q.correct_index = Number(t.value);
+    if (t.name === 'edRight') {
+      var k = Number(t.value);
+      if (!q.multi) q.right = [k];
+      else if (t.checked) { if (q.right.indexOf(k) < 0) q.right.push(k); q.right.sort(); }
+      else q.right = q.right.filter(function (x) { return x !== k; });
+    }
+    else if (t.id === 'edMulti') {
+      q.multi = t.value === '1';
+      if (!q.multi) q.right = [q.right.length ? q.right[0] : 0];
+      $('edAnswers').innerHTML = edAnswers();
+    }
     else if (t.id === 'edTime') q.time_s = Number(t.value);
     else if (t.id === 'edPoints') q.points = t.value;
     else if (t.id === 'edVerified') q.verified = t.checked;
@@ -1617,14 +1647,19 @@
     if (a === 'save') return edSave();
     if (a === 'cancel') return closeEditor();
     if (a === 'delete') return edDelete();
-    if (a === 'add' && q.options.length < 4) q.options.push('');
+    if (a === 'add' && q.options.length < 6) q.options.push('');
     else if (a === 'remove' && q.options.length > 2) {
       var i = Number(b.getAttribute('data-i'));
       q.options.splice(i, 1);
-      if (q.correct_index === i) q.correct_index = 0;
-      else if (q.correct_index > i) q.correct_index--;
+      q.right = q.right.filter(function (x) { return x !== i; }).map(function (x) { return x > i ? x - 1 : x; });
+      if (!q.right.length) q.right = [0];
     }
-    else if (a === 'tf') { q.options = ['True', 'False']; if (q.correct_index > 1) q.correct_index = 0; }
+    else if (a === 'tf') {
+      q.options = ['True', 'False'];
+      q.multi = false;
+      q.right = [q.right[0] > 1 ? 0 : q.right[0]];
+      var ms = $('edMulti'); if (ms) ms.value = '0';
+    }
     E.msg = '';
     $('edAnswers').innerHTML = edAnswers();
     edSync();

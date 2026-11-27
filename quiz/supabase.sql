@@ -48,6 +48,8 @@ create table public.games (
   started_at      timestamptz,
   paused_at       timestamptz,
   revealed_index  int,
+  revealed_set    int[],            -- every right answer, once revealed (multi-select has several)
+  multi           boolean not null default false,  -- the open question takes several answers
   explanation     text,
   card_mode       boolean not null default false,
   points          text not null default 'standard',  -- the open question's points: standard, double or none
@@ -70,9 +72,12 @@ create table public.questions (
   idx           int  not null,
   category      text not null,
   text          text not null,
-  options       jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 4),
-  correct_index int  not null check (correct_index between 0 and 3),
-  check (correct_index < jsonb_array_length(options)),
+  options       jsonb not null,
+  correct_index int  not null,       -- the first right answer (kept in step by _fix_correct)
+  correct_set   int[],               -- every right answer; null means just correct_index
+  multi         boolean not null default false,  -- players may tick several answers
+  constraint questions_options_n check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 6),
+  constraint questions_correct_ok check (correct_index between 0 and 5 and correct_index < jsonb_array_length(options)),
   explanation   text not null,
   time_s        int  not null default 20 check (time_s in (5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240)),
   points        text not null default 'standard' check (points in ('standard', 'double', 'none')),
@@ -89,9 +94,12 @@ create table public.question_bank (
   module        text not null,
   category      text not null,
   text          text not null,
-  options       jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 4),
-  correct_index int  not null check (correct_index between 0 and 3),
-  check (correct_index < jsonb_array_length(options)),
+  options       jsonb not null,
+  correct_index int  not null,       -- the first right answer (kept in step by _fix_correct)
+  correct_set   int[],               -- every right answer; null means just correct_index
+  multi         boolean not null default false,  -- players may tick several answers
+  constraint question_bank_options_n check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 6),
+  constraint question_bank_correct_ok check (correct_index between 0 and 5 and correct_index < jsonb_array_length(options)),
   explanation   text not null default '',
   verified      boolean not null default false,  -- the answer has been checked
   note          text not null default '',
@@ -114,7 +122,9 @@ create table public.answers (
   game_id      uuid not null references public.games (id) on delete cascade,
   player_id    uuid not null references public.players (id) on delete cascade,
   question_idx int  not null,
-  choice       int  not null check (choice between 0 and 3),
+  choice       int  not null,        -- the first answer ticked
+  choices      int[],               -- every answer ticked (multi-select)
+  constraint answers_choice_ok check (choice between 0 and 5),
   answered_at  timestamptz not null default now(),
   elapsed_ms   int  not null,
   is_correct   boolean not null,
@@ -130,6 +140,30 @@ create table public.card_awards (
   group_name   text not null,
   primary key (game_id, question_idx, group_name)
 );
+
+-- Keeps correct_index and correct_set in step, and checks the set:
+-- single answer: the set is just correct_index; multi-select: sorted, no repeats,
+-- at least one, each one an answer that exists.
+create or replace function public._fix_correct()
+returns trigger language plpgsql as $$
+declare n int := jsonb_array_length(new.options);
+begin
+  if not new.multi or new.correct_set is null or cardinality(new.correct_set) = 0 then
+    new.correct_set := array[new.correct_index];
+  else
+    select array_agg(distinct x order by x) into new.correct_set from unnest(new.correct_set) x;
+    if exists (select 1 from unnest(new.correct_set) x where x is null or x < 0 or x >= n) then
+      raise exception 'correct_set has an answer that does not exist';
+    end if;
+    new.correct_index := new.correct_set[1];
+  end if;
+  return new;
+end $$;
+
+create trigger questions_fix_correct before insert or update on public.questions
+  for each row execute function public._fix_correct();
+create trigger question_bank_fix_correct before insert or update on public.question_bank
+  for each row execute function public._fix_correct();
 
 -- ---------------------------------------------------------------- row level security
 alter table public.games        enable row level security;
@@ -208,7 +242,8 @@ returns jsonb language sql stable as $$
     'duration_s', g.duration_s, 'category', g.category,
     'question_text', g.question_text, 'options', g.options,
     'started_at', g.started_at, 'paused_at', g.paused_at,
-    'revealed_index', g.revealed_index, 'explanation', g.explanation,
+    'revealed_index', g.revealed_index, 'revealed_set', g.revealed_set, 'multi', g.multi,
+    'explanation', g.explanation,
     'card_mode', g.card_mode, 'points', g.points, 'event_name', g.event_name, 'teams', g.teams,
     'updated_at', g.updated_at)
 $$;
@@ -314,7 +349,7 @@ begin
   if p_status = 'lobby' or p_index < 0 then
     update public.games set status = 'lobby', current_index = -1, category = null,
            question_text = null, options = null, started_at = null, paused_at = null,
-           revealed_index = null, explanation = null, updated_at = now()
+           revealed_index = null, revealed_set = null, multi = false, explanation = null, updated_at = now()
      where id = p_game;
     return;
   end if;
@@ -330,6 +365,7 @@ begin
     options        = q.options,
     duration_s     = q.time_s,
     points         = q.points,
+    multi          = q.multi,
     started_at     = case
                        when p_status = 'question' and (g.status <> 'question' or g.current_index <> p_index) then now()
                        when p_status = 'question' then g.started_at
@@ -338,6 +374,7 @@ begin
     paused_at      = case when p_status = 'question' and g.status = 'question' and g.current_index = p_index
                           then g.paused_at end,
     revealed_index = case when p_status in ('reveal', 'leaderboard', 'final') then q.correct_index end,
+    revealed_set   = case when p_status in ('reveal', 'leaderboard', 'final') then q.correct_set end,
     explanation    = case when p_status in ('reveal', 'leaderboard', 'final') then q.explanation end,
     updated_at     = now()
   where id = p_game;
@@ -352,6 +389,7 @@ declare
   dist jsonb := null;
   n_in int := 0;
   by_team jsonb := '{}'::jsonb;
+  n_right int := 0;
 begin
   select * into g from public.games where id = p_game;
   if g.current_index >= 0 then
@@ -363,11 +401,15 @@ begin
              where a.game_id = p_game and a.question_idx = g.current_index
              group by p.group_name) t;
     if g.status in ('reveal', 'leaderboard', 'final') then
+      -- Votes per answer; a multi-select answer counts once for each answer ticked.
       select jsonb_agg(coalesce(c.n, 0) order by s.i) into dist
         from generate_series(0, coalesce(jsonb_array_length(g.options), 4) - 1) s(i)
-        left join (select choice, count(*)::int n from public.answers
-                    where game_id = p_game and question_idx = g.current_index
-                    group by choice) c on c.choice = s.i;
+        left join (select x as choice, count(*)::int n
+                     from public.answers a, unnest(coalesce(a.choices, array[a.choice])) x
+                    where a.game_id = p_game and a.question_idx = g.current_index
+                    group by x) c on c.choice = s.i;
+      select count(*) into n_right from public.answers
+       where game_id = p_game and question_idx = g.current_index and is_correct;
     end if;
   end if;
 
@@ -375,6 +417,7 @@ begin
     'game', public._public_game(g),
     'server_now', now(),
     'answers_in', n_in,
+    'right_in', n_right,
     'team_answers', by_team,
     'distribution', dist,
     'note', p_note,
@@ -468,6 +511,7 @@ begin
       'question_idx', g.current_index,
       'answered', a.id is not null,
       'choice', a.choice,
+      'choices', a.choices,
       'is_correct', coalesce(a.is_correct, false),
       'points', coalesce(a.points, 0),
       'rank', me.rank, 'players', n_players);
@@ -487,23 +531,29 @@ begin
     'game', public._public_game(g),
     'server_now', now(),
     'choice', a.choice,
+    'choices', a.choices,
     'total', me.total,
     'result', res,
     'final', fin);
 end $$;
 
 -- Scores the answer with server time. The client never sees the correct index.
-create or replace function public.submit_answer(p_player uuid, p_question_idx int, p_choice int)
+create or replace function public.submit_answers(p_player uuid, p_question_idx int, p_choices int[])
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   p public.players;
   g public.games;
   q public.questions;
+  v_set int[];
+  v_n int;
+  v_right int;
+  v_wrong int;
   v_elapsed numeric;
   v_correct boolean;
   v_points int;
 begin
-  if p_choice is null or p_choice not between 0 and 3 then
+  select array_agg(distinct x order by x) into v_set from unnest(coalesce(p_choices, '{}')) x where x is not null;
+  if v_set is null or exists (select 1 from unnest(v_set) x where x not between 0 and 5) then
     return jsonb_build_object('error', 'bad_choice');
   end if;
   select * into p from public.players where id = p_player;
@@ -523,23 +573,36 @@ begin
   v_elapsed := least(greatest(v_elapsed, 0), g.duration_s);
 
   select * into q from public.questions where game_id = g.id and idx = g.current_index;
-  if p_choice >= jsonb_array_length(q.options) then
+  v_n := jsonb_array_length(q.options);
+  if v_set[cardinality(v_set)] >= v_n or (not q.multi and cardinality(v_set) <> 1) then
     return jsonb_build_object('error', 'bad_choice');
   end if;
-  v_correct := (p_choice = q.correct_index);
+
+  -- Right = exactly the right answers. Multi-select gives partial credit: a share of
+  -- the points for each right answer ticked, but nothing if any wrong answer is ticked.
+  select count(*) filter (where x = any (q.correct_set)), count(*) filter (where not (x = any (q.correct_set)))
+    into v_right, v_wrong from unnest(v_set) x;
+  v_correct := v_wrong = 0 and v_right = cardinality(q.correct_set);
   -- 500 to 1000 for a right answer, doubled or zeroed by the question's points setting.
-  v_points := case when v_correct
-                   then (500 + round(500 * (1 - v_elapsed / g.duration_s))::int)
+  v_points := case when v_wrong = 0 and v_right > 0
+                   then round((500 + round(500 * (1 - v_elapsed / g.duration_s)))
+                              * v_right / cardinality(q.correct_set))::int
                         * case q.points when 'double' then 2 when 'none' then 0 else 1 end
                    else 0 end;
 
-  insert into public.answers (game_id, player_id, question_idx, choice, elapsed_ms, is_correct, points)
-  values (g.id, p.id, g.current_index, p_choice, round(v_elapsed * 1000)::int, v_correct, v_points)
+  insert into public.answers (game_id, player_id, question_idx, choice, choices, elapsed_ms, is_correct, points)
+  values (g.id, p.id, g.current_index, v_set[1], v_set, round(v_elapsed * 1000)::int, v_correct, v_points)
   on conflict (player_id, question_idx) do nothing;
 
   if not found then return jsonb_build_object('error', 'duplicate'); end if;
   return jsonb_build_object('ok', true);
 end $$;
+
+-- One answer (single-select questions; kept for phones still on the old page).
+create or replace function public.submit_answer(p_player uuid, p_question_idx int, p_choice int)
+returns jsonb language sql security definer set search_path = public as $$
+  select public.submit_answers(p_player, p_question_idx, array[p_choice])
+$$;
 
 -- ---------------------------------------------------------------- host functions
 -- Each takes the join code and PIN. Transition functions also take the status
@@ -573,8 +636,8 @@ begin
   return jsonb_build_object('questions', (
     select jsonb_agg(jsonb_build_object(
       'idx', q.idx, 'category', q.category, 'text', q.text, 'options', q.options,
-      'correct_index', q.correct_index, 'explanation', q.explanation,
-      'time_s', q.time_s, 'points', q.points) order by q.idx)
+      'correct_index', q.correct_index, 'correct_set', q.correct_set, 'multi', q.multi,
+      'explanation', q.explanation, 'time_s', q.time_s, 'points', q.points) order by q.idx)
     from public.questions q where q.game_id = a.p_game));
 end $$;
 
@@ -721,8 +784,9 @@ begin
   return jsonb_build_object(
     'bank', coalesce((select jsonb_agg(jsonb_build_object(
         'id', b.id, 'module', b.module, 'category', b.category, 'text', b.text,
-        'options', b.options, 'correct_index', b.correct_index, 'explanation', b.explanation,
-        'verified', b.verified, 'note', b.note, 'time_s', b.time_s, 'points', b.points) order by b.id)
+        'options', b.options, 'correct_index', b.correct_index, 'correct_set', b.correct_set, 'multi', b.multi,
+        'explanation', b.explanation, 'verified', b.verified, 'note', b.note,
+        'time_s', b.time_s, 'points', b.points) order by b.id)
       from public.question_bank b where b.game_id = a.p_game), '[]'::jsonb),
     'selected', coalesce((select jsonb_agg(q.bank_id order by q.idx)
       from public.questions q where q.game_id = a.p_game and q.bank_id is not null), '[]'::jsonb),
@@ -750,8 +814,10 @@ begin
   delete from public.card_awards where game_id = a.p_game;
   delete from public.answers where game_id = a.p_game;
   delete from public.questions where game_id = a.p_game;
-  insert into public.questions (game_id, idx, category, text, options, correct_index, explanation, time_s, points, bank_id)
-  select a.p_game, (t.ord - 1)::int, b.category, b.text, b.options, b.correct_index, b.explanation, b.time_s, b.points, b.id
+  insert into public.questions (game_id, idx, category, text, options, correct_index, correct_set, multi,
+                                explanation, time_s, points, bank_id)
+  select a.p_game, (t.ord - 1)::int, b.category, b.text, b.options, b.correct_index, b.correct_set, b.multi,
+         b.explanation, b.time_s, b.points, b.id
     from unnest(p_ids) with ordinality t(id, ord)
     join public.question_bank b on b.game_id = a.p_game and b.id = t.id;
   update public.games set total_questions = n, updated_at = now() where id = a.p_game;
@@ -760,7 +826,8 @@ end $$;
 
 -- Question editor on the host page: add or change one bank question.
 -- p_q: { id (null for a new one), module, category, text, options: [2-4 strings],
---        correct_index, explanation, note, verified, time_s, points }
+--        correct_index, correct: [right answers, for multi], multi,
+--        explanation, note, verified, time_s, points }
 -- If the game is in the lobby and the question is in the quiz, the quiz copy is updated too.
 create or replace function public.host_bank_save(p_code text, p_pin text, p_q jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -768,6 +835,7 @@ declare
   a record; g public.games; b public.question_bank;
   v_id int; v_text text; v_module text; v_cat text; v_expl text; v_note text;
   v_opts jsonb; v_n int; v_correct int; v_time int; v_points text; v_verified boolean;
+  v_multi boolean; v_set int[];
   v_in_quiz int := 0;
 begin
   a := public._host_auth(p_code, p_pin);
@@ -785,6 +853,7 @@ begin
   v_time    := case when p_q->>'time_s' ~ '^\d{1,3}$' then (p_q->>'time_s')::int end;
   v_points  := coalesce(p_q->>'points', 'standard');
   v_verified := coalesce(p_q->>'verified', 'false') = 'true';
+  v_multi   := coalesce(p_q->>'multi', 'false') = 'true';
 
   if char_length(v_text) < 1 or char_length(v_text) > 200 then return jsonb_build_object('note', 'bad_text'); end if;
   if char_length(v_module) < 1 or char_length(v_module) > 40 then return jsonb_build_object('note', 'bad_module'); end if;
@@ -796,29 +865,43 @@ begin
   select jsonb_agg(regexp_replace(trim(x), '\s+', ' ', 'g') order by o) into v_opts
     from jsonb_array_elements_text(p_q->'options') with ordinality t(x, o);
   v_n := coalesce(jsonb_array_length(v_opts), 0);
-  if v_n < 2 or v_n > 4 or exists (select 1 from jsonb_array_elements_text(v_opts) x
+  if v_n < 2 or v_n > 6 or exists (select 1 from jsonb_array_elements_text(v_opts) x
                                     where char_length(x) < 1 or char_length(x) > 120) then
     return jsonb_build_object('note', 'bad_options');
   end if;
-  if v_correct is null or v_correct >= v_n then return jsonb_build_object('note', 'bad_correct'); end if;
+  if v_multi then
+    if jsonb_typeof(p_q->'correct') is distinct from 'array' then return jsonb_build_object('note', 'bad_correct'); end if;
+    select array_agg(distinct (x)::int order by (x)::int) into v_set
+      from jsonb_array_elements_text(p_q->'correct') x where x ~ '^\d$';
+    if v_set is null or cardinality(v_set) <> jsonb_array_length(p_q->'correct')
+       or v_set[cardinality(v_set)] >= v_n then
+      return jsonb_build_object('note', 'bad_correct');
+    end if;
+    v_correct := v_set[1];
+  else
+    if v_correct is null or v_correct >= v_n then return jsonb_build_object('note', 'bad_correct'); end if;
+    v_set := array[v_correct];
+  end if;
 
   if v_id is null then
     -- New questions start at 1001, clear of the ids bank.local.sql uses.
     select greatest(1000, coalesce(max(id), 0)) + 1 into v_id from public.question_bank where game_id = a.p_game;
-    insert into public.question_bank (game_id, id, module, category, text, options, correct_index,
+    insert into public.question_bank (game_id, id, module, category, text, options, correct_index, correct_set, multi,
                                       explanation, verified, note, time_s, points)
-    values (a.p_game, v_id, v_module, v_cat, v_text, v_opts, v_correct, v_expl, v_verified, v_note, v_time, v_points)
+    values (a.p_game, v_id, v_module, v_cat, v_text, v_opts, v_correct, v_set, v_multi,
+            v_expl, v_verified, v_note, v_time, v_points)
     returning * into b;
   else
     update public.question_bank set module = v_module, category = v_cat, text = v_text, options = v_opts,
-           correct_index = v_correct, explanation = v_expl, verified = v_verified, note = v_note,
+           correct_index = v_correct, correct_set = v_set, multi = v_multi,
+           explanation = v_expl, verified = v_verified, note = v_note,
            time_s = v_time, points = v_points
      where game_id = a.p_game and id = v_id
     returning * into b;
     if b.id is null then return jsonb_build_object('note', 'not_found'); end if;
     if g.status = 'lobby' then
       update public.questions set category = v_cat, text = v_text, options = v_opts, correct_index = v_correct,
-             explanation = v_expl, time_s = v_time, points = v_points
+             correct_set = v_set, multi = v_multi, explanation = v_expl, time_s = v_time, points = v_points
        where game_id = a.p_game and bank_id = v_id;
       get diagnostics v_in_quiz = row_count;
     end if;
@@ -827,7 +910,8 @@ begin
   return jsonb_build_object('note', 'question_saved', 'quiz_updated', v_in_quiz > 0,
     'question', jsonb_build_object(
       'id', b.id, 'module', b.module, 'category', b.category, 'text', b.text, 'options', b.options,
-      'correct_index', b.correct_index, 'explanation', b.explanation, 'verified', b.verified,
+      'correct_index', b.correct_index, 'correct_set', b.correct_set, 'multi', b.multi,
+      'explanation', b.explanation, 'verified', b.verified,
       'note', b.note, 'time_s', b.time_s, 'points', b.points));
 end $$;
 
@@ -981,6 +1065,7 @@ grant execute on function
   public.player_join(text, text, text),
   public.player_sync(uuid),
   public.submit_answer(uuid, int, int),
+  public.submit_answers(uuid, int, int[]),
   public.host_login(text, text),
   public.host_state(text, text),
   public.host_questions(text, text),
