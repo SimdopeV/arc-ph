@@ -516,7 +516,8 @@
       '</span><span class="timer" id="timer"></span></div>' +
       '<div class="bar"><i id="bar"></i></div>' +
       '<p class="stake" id="stake"></p>' +
-      '<p class="qtext">' + Q.esc(g.question_text) + '</p>';
+      '<p class="qtext">' + Q.esc(g.question_text) + '</p>' +
+      (Q.imageUrl(g.image) ? '<div class="q-img"><img src="' + Q.esc(Q.imageUrl(g.image)) + '" alt=""></div>' : '');
     if (kind === 'type') return head + viewTyped(g, locked, late);
     if (kind === 'slider') return head + viewSlide(g, locked, late);
     if (kind === 'puzzle') return head + viewPuzzle(g, locked, late);

@@ -56,6 +56,7 @@ create table public.games (
   kind            text not null default 'choice',    -- the open question's type: choice, poll, type, slider, puzzle
   spec            jsonb,            -- slider settings the phones need: min, max, step, unit (never the answer)
   answer          jsonb,            -- once revealed: accepted answers (type), the number (slider) or the order (puzzle)
+  image           text,             -- the open question's picture: a path in the quiz-images storage bucket
   -- Set on the host page (Setup button, in the lobby).
   event_name      text not null default 'Community Meetup',
   teams           jsonb not null default '["Bobbilee", "Sam", "Tim", "Jeremy"]'::jsonb,
@@ -81,6 +82,8 @@ create table public.questions (
   multi         boolean not null default false,  -- players may tick several answers
   kind          text not null default 'choice' check (kind in ('choice', 'poll', 'type', 'slider', 'puzzle')),
   spec          jsonb,               -- slider: {min, max, step, answer, margin, unit}
+  image         text,                -- picture: <game id>/<random id>.jpg in the quiz-images bucket
+  constraint questions_image_ok check (image is null or image ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(jpg|webp|png)$'),
   -- options: the answers (choice, poll), the accepted answers (type), the items in
   -- the right order (puzzle) or nothing (slider).
   constraint questions_options_n check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between
@@ -111,6 +114,8 @@ create table public.question_bank (
   multi         boolean not null default false,  -- players may tick several answers
   kind          text not null default 'choice' check (kind in ('choice', 'poll', 'type', 'slider', 'puzzle')),
   spec          jsonb,               -- slider: {min, max, step, answer, margin, unit}
+  image         text,                -- picture: <game id>/<random id>.jpg in the quiz-images bucket
+  constraint question_bank_image_ok check (image is null or image ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(jpg|webp|png)$'),
   -- options: the answers (choice, poll), the accepted answers (type), the items in
   -- the right order (puzzle) or nothing (slider).
   constraint question_bank_options_n check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between
@@ -274,7 +279,7 @@ returns jsonb language sql stable as $$
     'question_text', g.question_text, 'options', g.options,
     'started_at', g.started_at, 'paused_at', g.paused_at,
     'revealed_index', g.revealed_index, 'revealed_set', g.revealed_set, 'multi', g.multi,
-    'kind', g.kind, 'spec', g.spec, 'answer', g.answer,
+    'kind', g.kind, 'spec', g.spec, 'answer', g.answer, 'image', g.image,
     'explanation', g.explanation,
     'card_mode', g.card_mode, 'points', g.points, 'event_name', g.event_name, 'teams', g.teams,
     'updated_at', g.updated_at)
@@ -386,7 +391,7 @@ begin
     update public.games set status = 'lobby', current_index = -1, category = null,
            question_text = null, options = null, started_at = null, paused_at = null,
            revealed_index = null, revealed_set = null, multi = false, kind = 'choice', spec = null, answer = null,
-           explanation = null, updated_at = now()
+           image = null, explanation = null, updated_at = now()
      where id = p_game;
     return;
   end if;
@@ -423,6 +428,7 @@ begin
     points         = q.points,
     multi          = q.multi,
     kind           = q.kind,
+    image          = q.image,
     spec           = case when q.kind = 'slider' then jsonb_build_object('min', q.spec->'min', 'max', q.spec->'max',
                        'step', q.spec->'step', 'unit', coalesce(q.spec->'unit', '""'::jsonb)) end,
     started_at     = case
@@ -798,7 +804,7 @@ begin
     select jsonb_agg(jsonb_build_object(
       'idx', q.idx, 'category', q.category, 'text', q.text, 'options', q.options,
       'correct_index', q.correct_index, 'correct_set', q.correct_set, 'multi', q.multi,
-      'kind', q.kind, 'spec', q.spec,
+      'kind', q.kind, 'spec', q.spec, 'image', q.image,
       'explanation', q.explanation, 'time_s', q.time_s, 'points', q.points) order by q.idx)
     from public.questions q where q.game_id = a.p_game));
 end $$;
@@ -947,7 +953,7 @@ begin
     'bank', coalesce((select jsonb_agg(jsonb_build_object(
         'id', b.id, 'module', b.module, 'category', b.category, 'text', b.text,
         'options', b.options, 'correct_index', b.correct_index, 'correct_set', b.correct_set, 'multi', b.multi,
-        'kind', b.kind, 'spec', b.spec,
+        'kind', b.kind, 'spec', b.spec, 'image', b.image,
         'explanation', b.explanation, 'verified', b.verified, 'note', b.note,
         'time_s', b.time_s, 'points', b.points) order by b.id)
       from public.question_bank b where b.game_id = a.p_game), '[]'::jsonb),
@@ -978,9 +984,9 @@ begin
   delete from public.answers where game_id = a.p_game;
   delete from public.questions where game_id = a.p_game;
   insert into public.questions (game_id, idx, category, text, options, correct_index, correct_set, multi,
-                                kind, spec, explanation, time_s, points, bank_id)
+                                kind, spec, image, explanation, time_s, points, bank_id)
   select a.p_game, (t.ord - 1)::int, b.category, b.text, b.options, b.correct_index, b.correct_set, b.multi,
-         b.kind, b.spec, b.explanation, b.time_s, b.points, b.id
+         b.kind, b.spec, b.image, b.explanation, b.time_s, b.points, b.id
     from unnest(p_ids) with ordinality t(id, ord)
     join public.question_bank b on b.game_id = a.p_game and b.id = t.id;
   update public.games set total_questions = n, updated_at = now() where id = a.p_game;
@@ -992,6 +998,7 @@ end $$;
 --        options: choice and poll 2-6 answers, type 1-4 accepted answers, puzzle 3-4 items in the right order,
 --        correct_index, correct: [right answers, for multi], multi,
 --        slider: {min, max, step, answer, margin, unit} (slider only),
+--        image: a path from quiz-upload, or null for no picture,
 --        explanation, note, verified, time_s, points }
 -- If the game is in the lobby and the question is in the quiz, the quiz copy is updated too.
 create or replace function public.host_bank_save(p_code text, p_pin text, p_q jsonb)
@@ -1004,6 +1011,7 @@ declare
   v_kind text; v_spec jsonb := null; v_sl jsonb;
   v_min numeric; v_max numeric; v_step numeric; v_ans numeric; v_margin numeric; v_unit text;
   v_lo int; v_hi int; v_len int;
+  v_image text;
   v_in_quiz int := 0;
 begin
   a := public._host_auth(p_code, p_pin);
@@ -1023,6 +1031,7 @@ begin
   v_points  := coalesce(p_q->>'points', 'standard');
   v_verified := coalesce(p_q->>'verified', 'false') = 'true';
   v_multi   := v_kind = 'choice' and coalesce(p_q->>'multi', 'false') = 'true';
+  v_image   := nullif(trim(coalesce(p_q->>'image', '')), '');
 
   if v_kind not in ('choice', 'poll', 'type', 'slider', 'puzzle') then return jsonb_build_object('note', 'bad_kind'); end if;
   if char_length(v_text) < 1 or char_length(v_text) > 200 then return jsonb_build_object('note', 'bad_text'); end if;
@@ -1031,6 +1040,10 @@ begin
   if char_length(v_expl) > 400 or char_length(v_note) > 300 then return jsonb_build_object('note', 'bad_explanation'); end if;
   if v_time is null or v_time not in (5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240) then return jsonb_build_object('note', 'bad_time'); end if;
   if v_points not in ('standard', 'double', 'none') then return jsonb_build_object('note', 'bad_points'); end if;
+  -- A picture uploaded through quiz-upload for this game, or none.
+  if v_image is not null and (v_image !~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(jpg|webp|png)$' or split_part(v_image, '/', 1) <> a.p_game::text) then
+    return jsonb_build_object('note', 'bad_image');
+  end if;
 
   if v_kind = 'slider' then
     -- {min, max, step, answer, margin, unit}: the answer and both ends sit on the step.
@@ -1088,13 +1101,13 @@ begin
     -- New questions start at 1001, clear of the ids bank.local.sql uses.
     select greatest(1000, coalesce(max(id), 0)) + 1 into v_id from public.question_bank where game_id = a.p_game;
     insert into public.question_bank (game_id, id, module, category, text, options, correct_index, correct_set, multi,
-                                      kind, spec, explanation, verified, note, time_s, points)
+                                      kind, spec, image, explanation, verified, note, time_s, points)
     values (a.p_game, v_id, v_module, v_cat, v_text, v_opts, v_correct, v_set, v_multi,
-            v_kind, v_spec, v_expl, v_verified, v_note, v_time, v_points)
+            v_kind, v_spec, v_image, v_expl, v_verified, v_note, v_time, v_points)
     returning * into b;
   else
     update public.question_bank set module = v_module, category = v_cat, text = v_text, options = v_opts,
-           correct_index = v_correct, correct_set = v_set, multi = v_multi, kind = v_kind, spec = v_spec,
+           correct_index = v_correct, correct_set = v_set, multi = v_multi, kind = v_kind, spec = v_spec, image = v_image,
            explanation = v_expl, verified = v_verified, note = v_note,
            time_s = v_time, points = v_points
      where game_id = a.p_game and id = v_id
@@ -1102,7 +1115,7 @@ begin
     if b.id is null then return jsonb_build_object('note', 'not_found'); end if;
     if g.status = 'lobby' then
       update public.questions set category = v_cat, text = v_text, options = v_opts, correct_index = v_correct,
-             correct_set = v_set, multi = v_multi, kind = v_kind, spec = v_spec,
+             correct_set = v_set, multi = v_multi, kind = v_kind, spec = v_spec, image = v_image,
              explanation = v_expl, time_s = v_time, points = v_points
        where game_id = a.p_game and bank_id = v_id;
       get diagnostics v_in_quiz = row_count;
@@ -1113,9 +1126,20 @@ begin
     'question', jsonb_build_object(
       'id', b.id, 'module', b.module, 'category', b.category, 'text', b.text, 'options', b.options,
       'correct_index', b.correct_index, 'correct_set', b.correct_set, 'multi', b.multi,
-      'kind', b.kind, 'spec', b.spec,
+      'kind', b.kind, 'spec', b.spec, 'image', b.image,
       'explanation', b.explanation, 'verified', b.verified,
       'note', b.note, 'time_s', b.time_s, 'points', b.points));
+end $$;
+
+-- Called by the quiz-upload Edge Function before it hands out an upload link.
+-- A wrong PIN counts towards the lockout like any other host call.
+create or replace function public.host_image_check(p_code text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare a record;
+begin
+  a := public._host_auth(p_code, p_pin);
+  if a.p_game is null then return jsonb_build_object('error', a.p_err); end if;
+  return jsonb_build_object('ok', true, 'game', a.p_game);
 end $$;
 
 -- Removes a question from the bank. A copy already in the quiz stays in the quiz.
@@ -1279,6 +1303,7 @@ grant execute on function
   public.host_bank_save(text, text, jsonb),
   public.host_bank_delete(text, text, int),
   public.host_bank_set_time(text, text, int[], int),
+  public.host_image_check(text, text),
   public.host_start(text, text),
   public.host_open_question(text, text, text, int, int),
   public.host_reveal(text, text, int),
@@ -1292,6 +1317,26 @@ grant execute on function
   public.host_card_set(text, text, int, text[]),
   public.host_goto(text, text, text, int)
 to anon, authenticated;
+
+-- The Edge Function calls host_image_check with the service role (Supabase only).
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.host_image_check(text, text) to service_role;
+  end if;
+end $$;
+
+-- Pictures: a public bucket (anyone with the link can view, nobody can list it).
+-- Uploads only go through quiz-upload, which checks the host PIN. Supabase only.
+do $$
+begin
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('quiz-images', 'quiz-images', true, 1048576, array['image/jpeg', 'image/webp', 'image/png'])
+    on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------- the game
 -- The questions live in bank.local.sql (the full bank; pick from it on the host page)

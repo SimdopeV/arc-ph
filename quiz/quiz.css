@@ -368,3 +368,7 @@ body.hurry::after { animation: heart-glow 1s ease-out infinite; }
 .result.poll .mark { background: rgba(243, 202, 148, .16); color: #F3CA94; border: 2px solid rgba(243, 202, 148, .5); }
 .result.poll .verdict { color: #F3CA94; }
 .result.show.poll .mark { animation: pop-in .5s var(--spring) both; }
+
+/* Question picture on the phone */
+.q-img { display: flex; justify-content: center; }
+.q-img img { display: block; max-width: 100%; max-height: 30vh; border-radius: 14px; object-fit: contain; background: rgba(255, 255, 255, .04); }

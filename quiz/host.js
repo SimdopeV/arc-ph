@@ -59,7 +59,7 @@
         options: pub ? pub.options : null, started_at: c.started_at, paused_at: c.paused_at,
         revealed_index: shown && q && k === 'choice' ? q.correct_index : null, explanation: shown && q ? q.explanation : null,
         revealed_set: shown && q ? (k === 'choice' ? (q.correct_set || [q.correct_index]) : []) : null, multi: !!(q && q.multi),
-        kind: k, spec: pub ? pub.spec : null, answer: shown && pub ? pub.answer : null,
+        kind: k, spec: pub ? pub.spec : null, answer: shown && pub ? pub.answer : null, image: q ? q.image || null : null,
         card_mode: true
       };
     }
@@ -187,6 +187,11 @@
       if (r.data && r.data.questions) {
         H.questions = r.data.questions;
         Q.local.setJSON(K.qs, H.questions);
+        // Load every picture once, so card mode still has them if the internet drops.
+        H.questions.forEach(function (q) {
+          var u = Q.imageUrl(q.image);
+          if (u) { try { fetch(u, { mode: 'cors' }).catch(function () {}); } catch (e) {} }
+        });
       }
     });
   }
@@ -767,7 +772,8 @@
         (g.card_mode && g.status === 'reveal' ? cardButtons(g) : (H.hideScores ? '' : groupStrip(true)));
     }
 
-    return '<section class="' + (revealed ? 'is-reveal' : 'is-question') + '">' +
+    var img = Q.imageUrl(g.image);
+    return '<section class="' + (revealed ? 'is-reveal' : 'is-question') + (img ? ' has-img' : '') + '">' +
       '<div class="q-top"><div>' +
       '  <div class="q-meta"><span class="num">Question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</span>' +
       (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') +
@@ -776,7 +782,10 @@
       (KIND_CHIP[k] ? '<span class="pts multi">' + KIND_CHIP[k] + '</span>' : '') +
       chip + '</div>' +
       '  <h1 class="q-text">' + esc(g.question_text) + '</h1>' +
-      '</div>' + (revealed ? '' : ring()) + '</div>' +
+      '</div>' + (revealed || img ? '' : ring()) + '</div>' +
+      (img ? '<div class="q-mid"><div class="q-side">' + (revealed ? '' : ring()) + '</div>' +
+        '<div class="q-img"><img src="' + esc(img) + '" alt=""></div>' +
+        '<div class="q-side">' + (revealed || g.card_mode ? '' : '<div class="ans-big"><b id="ansBig">0</b><span>' + (k === 'poll' ? 'votes' : 'answers') + '</span></div>') + '</div></div>' : '') +
       body + foot +
       '</section>';
   }
@@ -785,7 +794,9 @@
   function patchLive(g) {
     if (!g || g.status !== 'question' || g.card_mode) return;
     var ps = players();
-    var el = $('ansIn'), box = $('tcounts');
+    var el = $('ansIn'), box = $('tcounts'), big = $('ansBig');
+    var nIn = String((H.view && H.view.answers_in) || 0);
+    if (big && big.textContent !== nIn) { big.textContent = nIn; bump(big); }
     var txt = ((H.view && H.view.answers_in) || 0) + ' / ' + ps.length;
     if (el && el.textContent !== txt) {
       var had = el.textContent !== '';
@@ -1136,6 +1147,20 @@
     }
   }
 
+  // The open question's picture, blurred and darkened, fills the background.
+  var qbg = document.createElement('div');
+  qbg.className = 'q-bg'; qbg.setAttribute('aria-hidden', 'true');
+  document.body.insertBefore(qbg, document.body.firstChild);
+  function renderBg(g) {
+    var url = g && (g.status === 'question' || g.status === 'reveal') ? Q.imageUrl(g.image) : '';
+    var want = url ? 'url("' + url + '")' : '';
+    if (qbg.getAttribute('data-url') !== want) {
+      qbg.setAttribute('data-url', want);
+      if (want) qbg.style.backgroundImage = want;
+    }
+    qbg.classList.toggle('on', !!url);
+  }
+
   var podiumTimer = 0;
   function render() {
     var g = game();
@@ -1160,6 +1185,7 @@
     if (fresh) onEnter(g, key, loud);
     if (g && g.status === 'lobby') patchLobby();
     patchLive(g);
+    renderBg(g);
 
     // The podium builds for a moment, then the confetti and fanfare land with the winner.
     var podium = !!g && g.status === 'final' && H.finalStep === 0;
@@ -1362,6 +1388,7 @@
     var tags = '<span class="tag">' + esc(q.module) + '</span>' +
       (q.category && q.module.toLowerCase().indexOf(String(q.category).toLowerCase()) < 0 ? '<span class="tag">' + esc(q.category) + '</span>' : '') +
       '<span class="tag">' + kind + '</span>' +
+      (q.image ? '<span class="tag">Picture</span>' : '') +
       '<span class="tag">' + timeShort(q.time_s) + '</span>' +
       (q.points && q.points !== 'standard' ? '<span class="tag pts-' + q.points + '">' + pointsLabel(q.points) + '</span>' : '') +
       (q.verified ? '<span class="tag ok">Answer checked</span>' : '<span class="tag warn">Answer not confirmed</span>');
@@ -1379,7 +1406,7 @@
           return '<li class="' + (P.answers && (rightSet.indexOf(i) >= 0 || qk === 'type') ? 'right' : '') + '"><i>' + mark + '</i><span>' + esc(t) + '</span></li>';
         }).join('') + '</ol>';
       }
-      more = list +
+      more = (q.image ? '<img class="pk-img" src="' + esc(Q.imageUrl(q.image)) + '" alt="">' : '') + list +
         (q.note ? '<p class="pk-note">' + esc(q.note) + '</p>' : '') +
         (P.answers && q.explanation ? '<p class="pk-expl">' + esc(q.explanation) + '</p>' : '') +
         (P.answers || qk === 'poll' ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>') +
@@ -1533,6 +1560,75 @@
   function pointsLabel(p) { return p === 'double' ? 'Double points' : p === 'none' ? 'No points' : 'Standard'; }
 
   function edSnapshot() { return JSON.stringify(E.q); }
+
+  // ---- picture: shrunk in the browser, then uploaded through the quiz-upload Edge Function
+  function edPic() {
+    var q = E.q, url = Q.imageUrl(q.image);
+    var input = '<input type="file" id="edFile" accept="image/*" hidden>';
+    if (E.uploading) return '<span class="ed-pic-box busy">Uploading...</span><span class="ed-hint">Shrinking and sending the picture.</span>';
+    if (url) {
+      return '<img src="' + esc(url) + '" alt="Question picture">' +
+        '<span class="ed-pic-acts"><label class="pk-btn">Change picture' + input + '</label>' +
+        '<button type="button" class="pk-btn" data-ed="pic-remove">Remove picture</button></span>';
+    }
+    return '<label class="pk-btn">Add picture' + input + '</label><span class="ed-hint">Optional. Or paste a picture here. It shows on the big screen and the phones.</span>';
+  }
+  function edPicRender() { var el = $('edPic'); if (el) el.innerHTML = edPic(); }
+
+  // Longest side at most 1600 pixels, JPEG, under the bucket's 1 MB limit.
+  function shrink(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var tries = [[1600, 0.82], [1280, 0.72], [1000, 0.62]];
+        (function go(i) {
+          var max = tries[i][0], scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+          var c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          var ctx = c.getContext('2d');
+          ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height); // transparent PNGs get a white back
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(function (b) {
+            if (!b) return reject(new Error('shrink'));
+            if (b.size > 950000 && i + 1 < tries.length) return go(i + 1);
+            if (b.size > 1000000) return reject(new Error('too_big'));
+            resolve(b);
+          }, 'image/jpeg', tries[i][1]);
+        })(0);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
+      img.src = url;
+    });
+  }
+
+  function edUpload(file) {
+    if (!E.open || !file || E.uploading) return;
+    if (!/^image\//.test(file.type || '')) { E.msg = 'That file is not a picture.'; return edSync(); }
+    if (!Q.client) { E.msg = 'Pictures need the internet.'; return edSync(); }
+    E.uploading = true; E.msg = '';
+    edPicRender(); edSync();
+    var done = function (msg) { E.uploading = false; E.msg = msg || ''; edPicRender(); edSync(); };
+    shrink(file).then(function (blob) {
+      return Q.client.functions.invoke('quiz-upload', { body: { code: CODE, pin: H.pin, type: 'image/jpeg' } }).then(function (res) {
+        var d = res && res.data;
+        if (res.error || !d) return done(/fetch|network|Failed/i.test(String(res.error && res.error.message)) ? 'No connection. The picture was not uploaded.'
+          : 'Picture uploads are not switched on in Supabase yet (the quiz-upload function).');
+        if (d.error === 'bad_pin' || d.error === 'pin_not_set') { done(); relock(d.error); return; }
+        if (d.error === 'locked') return done('Too many wrong PINs. Wait a minute.');
+        if (d.error || !d.path) return done('Could not upload the picture.');
+        return Q.client.storage.from('quiz-images').uploadToSignedUrl(d.path, d.token, blob, { contentType: 'image/jpeg' }).then(function (up) {
+          if (up.error) return done('Could not upload the picture' + (up.error.message ? ': ' + up.error.message : '.'));
+          if (!E.open) return;
+          E.q.image = d.path;
+          done('Picture added. Save the question to keep it.');
+        });
+      });
+    }, function (err) {
+      done(err && err.message === 'too_big' ? 'That picture is too detailed to shrink under 1 MB. Try a smaller one.' : 'That picture could not be read. Try a JPEG or PNG.');
+    }).catch(function () { done('Could not upload the picture.'); });
+  }
   function edDirty() { return E.open && edSnapshot() !== E.start; }
 
   function openEditor(id, copy) {
@@ -1554,6 +1650,8 @@
     if (q.kind === 'slider') q.options = [];
     delete q.correct_set; delete q.correct_index; delete q.spec;
     E.stash = {};
+    q.image = q.image || null;
+    E.uploading = false;
     if (copy) { q.id = null; q.verified = false; }
     if (q.category === q.module) q.category = '';
     E.open = true; E.q = q; E.start = edSnapshot(); E.saving = false; E.armDelete = 0; E.applyAll = false;
@@ -1665,6 +1763,7 @@
       '<div class="ed-body">' +
       '<label class="ed-label" for="edText">Question <span id="edTextN"></span></label>' +
       '<textarea id="edText" maxlength="200" rows="2" placeholder="Start typing your question">' + esc(q.text) + '</textarea>' +
+      '<div class="ed-pic" id="edPic">' + edPic() + '</div>' +
       '<div class="ed-row2">' +
       '  <div><label class="ed-label" for="edModule">Set</label>' +
       '    <input id="edModule" maxlength="40" list="edModules" autocomplete="off" placeholder="For example Meetup" value="' + esc(q.module) + '">' +
@@ -1721,7 +1820,7 @@
     if (del) { var armed = E.armDelete > Date.now(); del.textContent = armed ? 'Delete for good?' : 'Delete'; del.className = 'pk-btn' + (armed ? ' arm' : ''); }
     $('edMsg').textContent = E.msg;
     var save = $('edSave');
-    save.disabled = E.saving;
+    save.disabled = E.saving || E.uploading;
     save.textContent = E.saving ? 'Saving...' : 'Save question';
   }
 
@@ -1788,6 +1887,7 @@
       options: sl ? [] : c.options, correct_index: sl ? 0 : c.correct[0] || 0, correct: sl ? [] : c.correct,
       multi: q.kind === 'choice' && !!q.multi && c.correct.length > 0,
       slider: sl ? { min: c.min, max: c.max, step: c.step, answer: c.answer, margin: c.margin, unit: c.unit } : null,
+      image: q.image || null,
       explanation: q.explanation.trim(),
       note: q.note.trim(), verified: !!q.verified, time_s: Number(q.time_s), points: q.points
     };
@@ -1803,6 +1903,7 @@
                bad_options: ({ type: 'Give 1 to 4 different accepted answers, 40 characters each at most.',
                  puzzle: 'Give 3 or 4 different items, 120 characters each at most.' })[q.kind] || 'Each answer must be 1 to 120 characters, with 2 to 6 answers.',
                bad_slider: 'Check the slider numbers.', bad_kind: 'Pick a question type.',
+               bad_image: 'That picture did not upload properly. Add it again.',
                bad_correct: 'Tick the right answer.',
                bad_time: 'Pick a time limit.', bad_points: 'Pick the points.', not_found: 'This question was deleted. Close the editor.' })[note] ||
             (r.error && /find the function|does not exist/i.test(r.error)
@@ -1895,6 +1996,7 @@
       edRefresh();
     }
     else if (t.id === 'edKind') edSetKind(t.value);
+    else if (t.id === 'edFile') { edUpload(t.files && t.files[0]); return; }
     else if (t.id === 'edTime') q.time_s = Number(t.value);
     else if (t.id === 'edPoints') q.points = t.value;
     else if (t.id === 'edVerified') q.verified = t.checked;
@@ -1909,6 +2011,7 @@
     if (a === 'save') return edSave();
     if (a === 'cancel') return closeEditor();
     if (a === 'delete') return edDelete();
+    if (a === 'pic-remove') { q.image = null; E.msg = ''; edPicRender(); return edSync(); }
     if (a === 'add' && q.options.length < ED_LIMITS[q.kind][1]) q.options.push('');
     else if (a === 'remove' && q.options.length > ED_LIMITS[q.kind][0]) {
       var i = Number(b.getAttribute('data-i'));
@@ -1926,6 +2029,12 @@
     var focus = a === 'add' && document.querySelectorAll('#edAnswers .ed-opt');
     if (focus && focus.length) focus[focus.length - 1].focus();
     edSync();
+  });
+  $('pkEdit').addEventListener('paste', function (e) {
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (/^image\//.test(items[i].type)) { e.preventDefault(); edUpload(items[i]); return; }
+    }
   });
   $('pkEdit').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); edSave(); }

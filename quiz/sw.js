@@ -1,7 +1,7 @@
 // Registered by host.html only. Network first, cache as fallback, so the host
 // page and its scripts still load after a reload with the internet down.
 // Supabase API calls are never cached.
-var CACHE = 'arc-ph-quiz-v3';
+var CACHE = 'arc-ph-quiz-v4';
 var PRECACHE = ['host.html', 'host.css', 'host.js', 'quiz.css', 'common.js', 'config.js',
   'Arc_Logo_White.svg',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.min.js',
@@ -25,7 +25,9 @@ self.addEventListener('fetch', function (e) {
   var url = new URL(req.url);
   var mine = url.origin === self.location.origin;
   var lib = url.hostname === 'cdn.jsdelivr.net' || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
-  if (!mine && !lib) return;
+  // Question pictures (public storage bucket), so card mode still shows them offline.
+  var pic = url.pathname.indexOf('/storage/v1/object/public/quiz-images/') >= 0;
+  if (!mine && !lib && !pic) return;
   e.respondWith(fetch(req).then(function (res) {
     if (res && (res.ok || res.type === 'opaque')) {
       var copy = res.clone();

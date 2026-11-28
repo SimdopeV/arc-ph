@@ -39,6 +39,11 @@
     // No thousands comma below 10,000, so years read as 2008, not 2,008.
     return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: Math.abs(n) >= 10000 });
   };
+  // A question's picture, from the public quiz-images bucket.
+  Q.imageUrl = function (path) {
+    if (!path || !/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|webp|png)$/.test(path)) return '';
+    return String(cfg.SUPABASE_URL || '').replace(/\/$/, '') + '/storage/v1/object/public/quiz-images/' + path;
+  };
   Q.joinAnd = function (list) {
     return list.length < 2 ? list.join('') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
   };
