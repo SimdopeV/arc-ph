@@ -52,18 +52,47 @@
     if (cardOn()) {
       var c = H.card, q = H.questions && H.questions[c.index];
       var shown = c.status === 'reveal' || c.status === 'leaderboard' || c.status === 'final';
+      var k = (q && q.kind) || 'choice', pub = q ? publicOf(q, c.index) : null;
       return {
         status: c.status, current_index: c.index, total_questions: H.questions ? H.questions.length : 12,
         duration_s: (q && q.time_s) || 20, points: (q && q.points) || 'standard', category: q ? q.category : null, question_text: q ? q.text : null,
-        options: q ? q.options : null, started_at: c.started_at, paused_at: c.paused_at,
-        revealed_index: shown && q ? q.correct_index : null, explanation: shown && q ? q.explanation : null,
-        revealed_set: shown && q ? (q.correct_set || [q.correct_index]) : null, multi: !!(q && q.multi),
+        options: pub ? pub.options : null, started_at: c.started_at, paused_at: c.paused_at,
+        revealed_index: shown && q && k === 'choice' ? q.correct_index : null, explanation: shown && q ? q.explanation : null,
+        revealed_set: shown && q ? (k === 'choice' ? (q.correct_set || [q.correct_index]) : []) : null, multi: !!(q && q.multi),
+        kind: k, spec: pub ? pub.spec : null, answer: shown && pub ? pub.answer : null,
         card_mode: true
       };
     }
     return H.view ? H.view.game : null;
   }
   function players() { return (H.view && H.view.players) || []; }
+
+  // Card mode works from the cached questions, which hold the answers. This gives
+  // the projector only what the server would show (the same rules as _apply).
+  function publicOf(q, index) {
+    var k = q.kind || 'choice', o = opts(q), spec = Q.json(q.spec) || {};
+    if (k === 'type') return { options: [], spec: null, answer: { accept: o } };
+    if (k === 'slider') {
+      return { options: [], spec: { min: spec.min, max: spec.max, step: spec.step, unit: spec.unit || '' },
+        answer: { answer: spec.answer, margin: spec.margin } };
+    }
+    if (k === 'puzzle') {
+      var sv = H.view && H.view.game, shown;
+      if (sv && sv.kind === 'puzzle' && sv.current_index === index && opts(sv).length === o.length) shown = opts(sv);
+      else {
+        // The same shuffle every time for this question, and never the right order.
+        shown = o.slice();
+        var seed = (index + 1) * 7919;
+        for (var i = shown.length - 1; i > 0; i--) {
+          seed = (seed * 48271) % 2147483647;
+          var j = seed % (i + 1), t = shown[i]; shown[i] = shown[j]; shown[j] = t;
+        }
+        if (shown.join('\n') === o.join('\n')) shown.push(shown.shift());
+      }
+      return { options: shown, spec: null, answer: { order: o.map(function (t) { return shown.indexOf(t); }) } };
+    }
+    return { options: o, spec: null, answer: null };
+  }
 
   // Group score = average member total + 100 per card award. Tie-break: correct answers.
   function standings() {
@@ -265,6 +294,7 @@
   function toggleAward(group) {
     var c = H.card;
     if (!cardOn() || (c.status !== 'reveal' && c.status !== 'leaderboard')) return;
+    if (Q.kind(game()) === 'poll') return; // nothing to win on a poll
     var list = (c.awards[c.index] || []).slice();
     var i = list.indexOf(group);
     if (i >= 0) list.splice(i, 1); else list.push(group);
@@ -612,8 +642,13 @@
 
   function cardButtons(g) {
     var picked = (H.card.awards[g.current_index] || []);
-    var letters = Q.rightSet(g).map(function (i) { return Q.LETTERS[i]; });
-    return '<p class="card-hint">Click each team that held up <b>' + Q.joinAnd(letters) + '</b>. 100 points each.</p>' +
+    var k = Q.kind(g), ans = Q.json(g.answer) || {}, spec = Q.json(g.spec) || {};
+    if (k === 'poll') return '<p class="card-hint">A poll has no right answer, so there is nothing to mark.</p>';
+    var hint = 'Click each team that held up <b>' + Q.joinAnd(Q.rightSet(g).map(function (i) { return Q.LETTERS[i]; })) + '</b>.';
+    if (k === 'type') hint = 'Click each team that wrote <b>' + esc((ans.accept || [])[0] || '') + '</b>.';
+    if (k === 'slider') hint = 'Click each team within <b>' + Q.fmt(ans.margin, spec.step) + '</b> of <b>' + Q.fmt(ans.answer, spec.step) + '</b>.';
+    if (k === 'puzzle') hint = 'Click each team that had the <b>right order</b>.';
+    return '<p class="card-hint">' + hint + ' 100 points each.</p>' +
       '<div' + stripAttr() + '>' + Q.GROUPS.map(function (name) {
         var on = picked.indexOf(name) >= 0;
         return '<button type="button" class="gs" data-award="' + esc(name) + '" aria-pressed="' + on + '">' +
@@ -623,8 +658,9 @@
 
   // Share of phone answers that were right, or null when there is nothing to show.
   function pctRight(g) {
-    var v = H.view;
-    if (g.card_mode || !v || g.revealed_index == null) return null;
+    var v = H.view, k = Q.kind(g);
+    if (g.card_mode || !v || k === 'poll') return null;
+    if (k === 'choice' ? g.revealed_index == null : !g.answer) return null;
     if (v.right_in != null) return v.answers_in ? Math.round(v.right_in / v.answers_in * 100) : null;
     var dist = v.distribution; // older server: one answer each
     if (!dist) return null;
@@ -632,14 +668,77 @@
     return total ? Math.round((dist[g.revealed_index] || 0) / total * 100) : null;
   }
 
-  function viewQuestion(g) {
+  var KEYS_SVG = '<svg viewBox="0 0 48 32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">' +
+    '<rect x="2" y="3" width="44" height="26" rx="5"/><path d="M9 11h2M16 11h2M23 11h2M30 11h2M37 11h2M9 17h2M16 17h2M23 17h2M30 17h2M37 17h2M14 23h20"/></svg>';
+
+  // Type answer: a prompt while open; the accepted answers and the most common typed answers once revealed.
+  function typeBody(g, revealed) {
+    if (!revealed) {
+      return '<div class="hpanel"><div class="hp-icon">' + KEYS_SVG + '</div>' +
+        '<p class="hp-big">' + (g.card_mode ? 'Write your team\'s answer on a card' : 'Type your answer on your phone') + '</p>' +
+        '<p class="hp-sub">Spelling counts. Capitals and spaces don\'t.</p></div>';
+    }
+    var ans = Q.json(g.answer) || {}, acc = ans.accept || [];
+    var resp = !g.card_mode && H.view && Q.json(H.view.responses), top = (resp && resp.top) || [];
+    var most = top.reduce(function (a, t) { return Math.max(a, t.n); }, 0);
+    return '<div class="hpanel rev">' +
+      '<p class="hp-label">' + (acc.length > 1 ? 'Accepted answers' : 'The answer') + '</p>' +
+      '<div class="hp-acc">' + acc.map(function (t) { return '<span class="htile tile t0 right"><span class="txt">' + esc(t) + '</span></span>'; }).join('') + '</div>' +
+      (top.length ? '<div class="hp-typed">' + top.map(function (t) {
+        return '<div class="ty' + (t.right ? ' ok' : '') + '"><span class="tt">' + esc(t.text) + '</span>' +
+          '<span class="track"><span class="fill" style="width:' + Math.round(t.n / most * 100) + '%"></span></span><b>' + t.n + '</b></div>';
+      }).join('') + '</div>' : '') + '</div>';
+  }
+
+  // Slider: the range while open; the right number, the margin and where the guesses landed once revealed.
+  function sliderBody(g, revealed) {
+    var sp = Q.json(g.spec) || {}, min = Number(sp.min) || 0, max = Number(sp.max), step = sp.step, unit = sp.unit ? ' ' + esc(sp.unit) : '';
+    if (!(max > min)) max = min + 1;
+    var pos = function (v) { return Math.max(0, Math.min(100, (v - min) / (max - min) * 100)); };
+    var ends = '<div class="hs-ends"><span>' + Q.fmt(min, step) + unit + '</span><span>' + Q.fmt(max, step) + unit + '</span></div>';
+    if (!revealed) {
+      return '<div class="hpanel"><div class="hslider"><div class="hs-track"><span class="hs-thumb"></span></div>' + ends + '</div>' +
+        '<p class="hp-big">' + (g.card_mode ? 'Write your team\'s number on a card' : 'Slide to your answer on your phone') + '</p></div>';
+    }
+    var ans = Q.json(g.answer) || {}, a = Number(ans.answer), m = Number(ans.margin) || 0;
+    var resp = !g.card_mode && H.view && Q.json(H.view.responses), b = (resp && resp.buckets) || [];
+    var most = b.reduce(function (x, y) { return Math.max(x, y); }, 0);
+    var bars = most ? '<div class="hs-bars">' + b.map(function (n) {
+      return '<i style="height:' + (n ? Math.max(6, Math.round(n / most * 100)) : 0) + '%"></i>';
+    }).join('') + '</div>' : '';
+    var lo = pos(a - m), hi = pos(a + m);
+    return '<div class="hpanel rev"><div class="hslider' + (bars ? ' has-bars' : '') + '">' + bars +
+      '<div class="hs-track"><span class="hs-band" style="left:' + lo + '%;width:' + (hi - lo) + '%"></span>' +
+      '<span class="hs-mark" style="left:' + pos(a) + '%"><b>' + Q.fmt(a, step) + unit + '</b></span></div>' + ends + '</div>' +
+      '<p class="hp-sub">' + (m ? 'Within ' + Q.fmt(m, step) + unit + ' scores, closer scores more.' : 'Only the exact number scores.') +
+      (resp && resp.avg != null ? ' Average guess: <b>' + Q.fmt(resp.avg, step) + unit + '</b>.' : '') + '</p></div>';
+  }
+
+  // Puzzle: the items as shown on the phones; once revealed, the right order.
+  function puzzleBody(g, revealed) {
     var o = opts(g);
+    if (!revealed) {
+      return '<div class="tiles puzzle">' + o.map(function (t, i) {
+        return '<div class="htile tile t' + i + '"><div class="row"><span class="badge">' + Q.LETTERS[i] + '</span><span class="txt">' + esc(t) + '</span></div></div>';
+      }).join('') + '</div>';
+    }
+    var order = (Q.json(g.answer) || {}).order || [];
+    return '<div class="horder">' + order.map(function (i, n) {
+      return '<div class="ho"><span class="pos">' + (n + 1) + '</span><div class="htile tile t' + i + '"><div class="row"><span class="badge">' + Q.LETTERS[i] + '</span>' +
+        '<span class="txt">' + esc(o[i]) + '</span></div></div></div>';
+    }).join('') + '</div>';
+  }
+
+  var KIND_CHIP = { poll: 'Poll · no right answer', type: 'Type answer', slider: 'Slider', puzzle: 'Put them in order' };
+
+  function viewQuestion(g) {
+    var o = opts(g), k = Q.kind(g);
     var revealed = g.status !== 'question';
     var dist = !revealed || g.card_mode ? null : (H.view && H.view.distribution);
     var totalVotes = dist ? dist.reduce(function (a, b) { return a + b; }, 0) : 0;
     var rightSet = Q.rightSet(g);
     var tiles = o.map(function (t, i) {
-      var cls = 'htile tile t' + i + (revealed ? (rightSet.indexOf(i) >= 0 ? ' right' : ' dim') : '');
+      var cls = 'htile tile t' + i + (revealed && k === 'choice' ? (rightSet.indexOf(i) >= 0 ? ' right' : ' dim') : '');
       var bar = '';
       if (dist) {
         var pct = totalVotes ? Math.round(dist[i] / totalVotes * 100) : 0;
@@ -648,13 +747,17 @@
       return '<div class="' + cls + '"><div class="row"><span class="badge">' + Q.LETTERS[i] + '</span>' +
         '<span class="txt">' + esc(t) + '</span></div>' + bar + '</div>';
     }).join('');
+    var body = k === 'type' ? typeBody(g, revealed) : k === 'slider' ? sliderBody(g, revealed) : k === 'puzzle' ? puzzleBody(g, revealed)
+      : '<div class="tiles' + (o.length > 4 ? ' many' : '') + (k === 'poll' ? ' poll' : '') + '">' + tiles + '</div>';
 
     var foot, chip = '';
     if (!revealed) {
       // The live numbers are filled in by patchLive, so new answers never redraw the screen.
+      var cards = k === 'choice' || k === 'poll' ? 'get your ' + Q.LETTERS.slice(0, o.length).join(', ') + ' cards ready.'
+        : k === 'puzzle' ? 'write the letters in order.' : 'pens out.';
       var left = g.card_mode
-        ? '<span>Card round. Teams, get your ' + Q.LETTERS.slice(0, o.length).join(', ') + ' cards ready.</span>'
-        : '<span>Answers in: <b id="ansIn"></b></span>';
+        ? '<span>Card round. Teams, ' + cards + '</span>'
+        : '<span>' + (k === 'poll' ? 'Votes in' : 'Answers in') + ': <b id="ansIn"></b></span>';
       foot = '<div class="q-foot">' + left + '<span class="muted" id="qStatus"></span>' +
         (g.card_mode ? '' : '<div class="tcounts" id="tcounts"></div>') + '</div>';
     } else {
@@ -668,12 +771,13 @@
       '<div class="q-top"><div>' +
       '  <div class="q-meta"><span class="num">Question ' + (g.current_index + 1) + ' of ' + g.total_questions + '</span>' +
       (g.category ? '<span class="cat">' + esc(g.category) + '</span>' : '') +
-      (g.points === 'double' ? '<span class="pts double">Double points</span>' : g.points === 'none' ? '<span class="pts none">No points</span>' : '') +
+      (k === 'poll' ? '' : g.points === 'double' ? '<span class="pts double">Double points</span>' : g.points === 'none' ? '<span class="pts none">No points</span>' : '') +
       (g.multi ? '<span class="pts multi">' + (revealed ? rightSet.length + ' right answers' : 'Tick every right answer') + '</span>' : '') +
+      (KIND_CHIP[k] ? '<span class="pts multi">' + KIND_CHIP[k] + '</span>' : '') +
       chip + '</div>' +
       '  <h1 class="q-text">' + esc(g.question_text) + '</h1>' +
       '</div>' + (revealed ? '' : ring()) + '</div>' +
-      '<div class="tiles' + (o.length > 4 ? ' many' : '') + '">' + tiles + '</div>' + foot +
+      body + foot +
       '</section>';
   }
 
@@ -991,17 +1095,35 @@
         voice.say((last ? 'Final question. ' : 'Question ' + (g.current_index + 1) + '. ') +
           (g.points === 'double' ? 'Double points! ' : g.points === 'none' ? 'Just for fun, no points. ' : '') +
           (g.multi ? 'More than one right answer. ' : '') +
+          ({ poll: 'Quick poll, no right answer. ', type: 'Type your answer. ', slider: 'Slide to your answer. ', puzzle: 'Put these in order. ' }[Q.kind(g)] || '') +
           (g.question_text || ''), true);
       }
     } else if (g.status === 'reveal') {
       if (!loud) return;
       sfx.reveal();
-      var o = opts(g), set = Q.rightSet(g).filter(function (k) { return o[k] != null; });
-      if (!set.length) return;
+      var o = opts(g), kind = Q.kind(g), ans = Q.json(g.answer) || {}, line = '';
+      var set = Q.rightSet(g).filter(function (k) { return o[k] != null; });
+      if (kind === 'poll') {
+        var dv = !g.card_mode && H.view && H.view.distribution, best = -1;
+        if (dv) dv.forEach(function (n, i) { if (n > 0 && (best < 0 || n > dv[best])) best = i; });
+        var tie = best >= 0 && dv.filter(function (n) { return n === dv[best]; }).length > 1;
+        voice.say(best < 0 || tie ? 'Here is how the room voted.' : 'The room says: ' + o[best] + '.', true);
+        return;
+      } else if (kind === 'type') {
+        if (!(ans.accept || []).length) return;
+        line = 'The answer is ' + ans.accept[0] + '.';
+      } else if (kind === 'slider') {
+        var sp = Q.json(g.spec) || {};
+        line = 'The answer is ' + Q.fmt(ans.answer, sp.step) + (sp.unit ? ' ' + sp.unit : '') + '.';
+      } else if (kind === 'puzzle') {
+        line = 'The right order is ' + Q.joinAnd((ans.order || []).map(function (i) { return o[i]; })) + '.';
+      } else {
+        if (!set.length) return;
+        line = set.length > 1
+          ? 'The right answers are ' + Q.joinAnd(set.map(function (k) { return Q.LETTERS[k] + ', ' + o[k]; })) + '.'
+          : 'The answer is ' + (o.length > 2 ? Q.LETTERS[set[0]] + '. ' : '') + o[set[0]] + '.';
+      }
       var right = pctRight(g);
-      var line = set.length > 1
-        ? 'The right answers are ' + Q.joinAnd(set.map(function (k) { return Q.LETTERS[k] + ', ' + o[k]; })) + '.'
-        : 'The answer is ' + (o.length > 2 ? Q.LETTERS[set[0]] + '. ' : '') + o[set[0]] + '.';
       if (g.card_mode) line += ' Cards up!';
       else if (right !== null) line += right >= 80 ? ' Sharp room!' : right <= 25 ? ' Ouch. That one stung.' : ' ' + right + ' percent got it.';
       voice.say(line, true);
@@ -1229,10 +1351,14 @@
   }
 
   function pkRow(q) {
-    var pos = P.sel.indexOf(q.id), on = pos >= 0, o = pkOptions(q);
-    var kind = o.length === 2 && /^true$/i.test(o[0]) && /^false$/i.test(o[1]) ? 'True or false'
+    var pos = P.sel.indexOf(q.id), on = pos >= 0, o = pkOptions(q), qk = q.kind || 'choice', sp = Q.json(q.spec) || {};
+    var kind = qk === 'poll' ? 'Poll · ' + o.length + ' options'
+      : qk === 'type' ? 'Type answer'
+      : qk === 'slider' ? 'Slider · ' + Q.fmt(sp.min, sp.step) + ' to ' + Q.fmt(sp.max, sp.step) + (sp.unit ? ' ' + esc(sp.unit) : '')
+      : qk === 'puzzle' ? 'Puzzle · ' + o.length + ' items'
+      : o.length === 2 && /^true$/i.test(o[0]) && /^false$/i.test(o[1]) ? 'True or false'
       : (q.multi ? 'Multi-select · ' : '') + o.length + ' options';
-    var rightSet = q.multi && q.correct_set ? q.correct_set : [q.correct_index];
+    var rightSet = qk !== 'choice' ? [] : q.multi && q.correct_set ? q.correct_set : [q.correct_index];
     var tags = '<span class="tag">' + esc(q.module) + '</span>' +
       (q.category && q.module.toLowerCase().indexOf(String(q.category).toLowerCase()) < 0 ? '<span class="tag">' + esc(q.category) + '</span>' : '') +
       '<span class="tag">' + kind + '</span>' +
@@ -1241,12 +1367,22 @@
       (q.verified ? '<span class="tag ok">Answer checked</span>' : '<span class="tag warn">Answer not confirmed</span>');
     var more = '';
     if (P.openId === q.id) {
-      more = '<ol class="pk-opts">' + o.map(function (t, i) {
-        return '<li class="' + (P.answers && rightSet.indexOf(i) >= 0 ? 'right' : '') + '"><i>' + Q.LETTERS[i] + '</i><span>' + esc(t) + '</span></li>';
-      }).join('') + '</ol>' +
+      var list;
+      if (qk === 'slider') {
+        list = P.answers ? '<p class="pk-expl">Answer <b>' + Q.fmt(sp.answer, sp.step) + (sp.unit ? ' ' + esc(sp.unit) : '') + '</b>, scores within ' +
+          Q.fmt(sp.margin, sp.step) + '. Steps of ' + Q.fmt(sp.step, sp.step) + '.</p>' : '';
+      } else if ((qk === 'type' || qk === 'puzzle') && !P.answers) {
+        list = qk === 'puzzle' ? '<p class="pk-expl">' + o.length + ' items, shuffled on the phones.</p>' : '';
+      } else {
+        list = '<ol class="pk-opts' + (qk === 'type' ? ' acc' : '') + '">' + o.map(function (t, i) {
+          var mark = qk === 'puzzle' ? String(i + 1) : qk === 'type' ? '&#10003;' : Q.LETTERS[i];
+          return '<li class="' + (P.answers && (rightSet.indexOf(i) >= 0 || qk === 'type') ? 'right' : '') + '"><i>' + mark + '</i><span>' + esc(t) + '</span></li>';
+        }).join('') + '</ol>';
+      }
+      more = list +
         (q.note ? '<p class="pk-note">' + esc(q.note) + '</p>' : '') +
         (P.answers && q.explanation ? '<p class="pk-expl">' + esc(q.explanation) + '</p>' : '') +
-        (P.answers ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>') +
+        (P.answers || qk === 'poll' ? '' : '<p class="pk-expl">Tick Show answers to see the right answer.</p>') +
         '<div class="pk-row-acts"><button type="button" class="pk-btn" data-pk="edit" data-id="' + q.id + '">Edit</button>' +
         '<button type="button" class="pk-btn" data-pk="dup" data-id="' + q.id + '">Duplicate</button></div>';
     }
@@ -1406,10 +1542,18 @@
       category: '', text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', note: '',
       verified: false, time_s: 20, points: 'standard'
     };
+    q.kind = q.kind || 'choice';
     q.options = pkOptions(q).slice();
     q.multi = !!q.multi;
-    q.right = q.multi && q.correct_set && q.correct_set.length ? q.correct_set.slice() : [q.correct_index || 0];
-    delete q.correct_set; delete q.correct_index;
+    q.right = q.kind === 'choice' && q.multi && q.correct_set && q.correct_set.length ? q.correct_set.slice() : [q.kind === 'choice' ? q.correct_index || 0 : 0];
+    // The slider fields are kept as typed (strings) and checked on save.
+    var sp = Q.json(q.spec);
+    q.slider = sp && q.kind === 'slider'
+      ? { min: String(sp.min), max: String(sp.max), step: String(sp.step), answer: String(sp.answer), margin: String(sp.margin), unit: sp.unit || '' }
+      : { min: '0', max: '100', step: '1', answer: '50', margin: '10', unit: '' };
+    if (q.kind === 'slider') q.options = [];
+    delete q.correct_set; delete q.correct_index; delete q.spec;
+    E.stash = {};
     if (copy) { q.id = null; q.verified = false; }
     if (q.category === q.module) q.category = '';
     E.open = true; E.q = q; E.start = edSnapshot(); E.saving = false; E.armDelete = 0; E.applyAll = false;
@@ -1434,17 +1578,82 @@
     return true;
   }
 
+  // How many answers, accepted answers or items each type takes.
+  var ED_LIMITS = { choice: [2, 6], poll: [2, 6], type: [1, 4], puzzle: [3, 4], slider: [0, 0] };
+  var KINDS = [['choice', 'Quiz: pick the right answer'], ['poll', 'Poll: no right answer'], ['type', 'Type answer'],
+    ['slider', 'Slider: guess a number'], ['puzzle', 'Puzzle: put in order']];
+
   function edAnswers() {
-    var q = E.q;
+    var q = E.q, k = q.kind, min = ED_LIMITS[k][0];
     return q.options.map(function (t, i) {
-      return '<div class="ed-ans">' +
-        '<label class="ed-right" title="Mark as a right answer"><input type="' + (q.multi ? 'checkbox' : 'radio') + '" name="edRight" value="' + i + '"' +
-        (q.right.indexOf(i) >= 0 ? ' checked' : '') + '><span>' + Q.LETTERS[i] + '</span></label>' +
-        '<input class="ed-opt" data-i="' + i + '" maxlength="120" autocomplete="off" placeholder="Answer ' + Q.LETTERS[i] +
-        (i > 1 ? ' (optional)' : '') + '" value="' + esc(t) + '" aria-label="Answer ' + Q.LETTERS[i] + '">' +
-        (q.options.length > 2 ? '<button type="button" class="ed-x" data-ed="remove" data-i="' + i + '" aria-label="Remove answer ' + Q.LETTERS[i] + '">&#215;</button>' : '<span></span>') +
+      var mark, ph, label;
+      if (k === 'choice') {
+        mark = '<label class="ed-right" title="Mark as a right answer"><input type="' + (q.multi ? 'checkbox' : 'radio') + '" name="edRight" value="' + i + '"' +
+          (q.right.indexOf(i) >= 0 ? ' checked' : '') + '><span>' + Q.LETTERS[i] + '</span></label>';
+        label = 'Answer ' + Q.LETTERS[i]; ph = label + (i > 1 ? ' (optional)' : '');
+      } else if (k === 'poll') {
+        mark = '<span class="ed-mark">' + Q.LETTERS[i] + '</span>';
+        label = 'Answer ' + Q.LETTERS[i]; ph = label + (i > 1 ? ' (optional)' : '');
+      } else if (k === 'type') {
+        mark = '<span class="ed-mark ok">&#10003;</span>';
+        label = 'Accepted answer ' + (i + 1); ph = i ? 'Another way to write it (optional)' : 'The answer';
+      } else {
+        mark = '<span class="ed-mark">' + (i + 1) + '</span>';
+        label = 'Item ' + (i + 1); ph = (i === 0 ? 'First' : i === q.options.length - 1 ? 'Last' : 'Item ' + (i + 1));
+      }
+      return '<div class="ed-ans">' + mark +
+        '<input class="ed-opt" data-i="' + i + '" maxlength="' + (k === 'type' ? 40 : 120) + '" autocomplete="off" placeholder="' + ph +
+        '" value="' + esc(t) + '" aria-label="' + label + '">' +
+        (q.options.length > min ? '<button type="button" class="ed-x" data-ed="remove" data-i="' + i + '" aria-label="Remove ' + label + '">&#215;</button>' : '<span></span>') +
         '</div>';
     }).join('');
+  }
+
+  function edSlider() {
+    var s = E.q.slider;
+    function f(key, label, extra) {
+      return '<label class="ed-sl"><span>' + label + '</span><input data-sl="' + key + '" inputmode="decimal" autocomplete="off" value="' + esc(s[key]) + '"' + (extra || '') + '></label>';
+    }
+    return '<div class="ed-slider">' + f('min', 'Lowest') + f('max', 'Highest') + f('step', 'Step') +
+      f('answer', 'Right answer') + f('margin', 'Scores within (&plusmn;)') + f('unit', 'Unit <small>optional</small>', ' maxlength="12" inputmode="text" placeholder="km, %, USDC"') + '</div>' +
+      '<p class="ed-hint" id="edSlHint"></p>';
+  }
+
+  // The answers part of the editor, which depends on the question type.
+  function edAnsBlock() {
+    var q = E.q, k = q.kind, head;
+    if (k === 'slider') return '<div class="ed-row-head"><span class="ed-label">Slider</span></div>' + edSlider();
+    var title = { choice: 'Answers <small id="edRightHint"></small>', poll: 'Answers <small>players vote, nobody is wrong</small>',
+      type: 'Accepted answers <small>capitals and spaces don\'t count, spelling does</small>',
+      puzzle: 'Items in the right order <small>phones get them shuffled</small>' }[k];
+    var add = { choice: 'Add answer', poll: 'Add answer', type: 'Add another', puzzle: 'Add item' }[k];
+    head = '<div class="ed-row-head"><span class="ed-label">' + title + '</span><span>' +
+      (k === 'choice' ? '<select id="edMulti" aria-label="Answer options"><option value="0"' + (q.multi ? '' : ' selected') + '>Single answer</option>' +
+        '<option value="1"' + (q.multi ? ' selected' : '') + '>Multi-select</option></select>' +
+        ' <button type="button" class="pk-btn" data-ed="tf">True or false</button>' : '') +
+      ' <button type="button" class="pk-btn" data-ed="add" id="edAdd">' + add + '</button></span></div>';
+    return head + '<div class="ed-answers" id="edAnswers">' + edAnswers() + '</div>';
+  }
+  function edRefresh() { $('edAnsBlock').innerHTML = edAnsBlock(); }
+
+  // Switching type keeps what was typed for each kind of answer list.
+  function edSetKind(k) {
+    var q = E.q, grp = function (x) { return x === 'choice' || x === 'poll' ? 'ans' : x; };
+    if (k === q.kind) return;
+    E.stash[grp(q.kind)] = q.options.slice();
+    var was = q.kind;
+    q.kind = k;
+    if (grp(k) !== grp(was)) {
+      q.options = E.stash[grp(k)] || { ans: ['', '', '', ''], type: [''], puzzle: ['', '', ''], slider: [] }[grp(k)];
+    }
+    if (k !== 'choice') { q.multi = false; q.right = [0]; }
+    if (k === 'poll' && q.points !== 'standard') q.points = 'standard';
+    var lim = ED_LIMITS[k];
+    while (q.options.length < lim[0]) q.options.push('');
+    if (q.options.length > lim[1]) q.options = q.options.slice(0, lim[1]);
+    edRefresh();
+    var pw = $('edPointsWrap'); if (pw) pw.hidden = k === 'poll';
+    var ps = $('edPoints'); if (ps) ps.value = q.points;
   }
 
   function edBuild() {
@@ -1463,19 +1672,16 @@
       '  <div><label class="ed-label" for="edCategory">Label on the big screen</label>' +
       '    <input id="edCategory" maxlength="30" autocomplete="off" placeholder="Same as the set" value="' + esc(q.category) + '"></div>' +
       '</div>' +
-      '<div class="ed-row-head"><span class="ed-label">Answers <small id="edRightHint"></small></span>' +
-      '  <span><select id="edMulti" aria-label="Answer options"><option value="0"' + (q.multi ? '' : ' selected') + '>Single answer</option>' +
-      '<option value="1"' + (q.multi ? ' selected' : '') + '>Multi-select</option></select>' +
-      '  <button type="button" class="pk-btn" data-ed="tf">True or false</button>' +
-      '  <button type="button" class="pk-btn" data-ed="add" id="edAdd">Add answer</button></span></div>' +
-      '<div class="ed-answers" id="edAnswers">' + edAnswers() + '</div>' +
+      '<label class="ed-label" for="edKind">Question type</label>' +
+      '<select id="edKind">' + KINDS.map(function (x) { return '<option value="' + x[0] + '"' + (q.kind === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
+      '<div id="edAnsBlock">' + edAnsBlock() + '</div>' +
       '<div class="ed-row2">' +
       '  <div><label class="ed-label" for="edTime">Time limit</label><select id="edTime">' +
       TIMES.map(function (t) { return '<option value="' + t + '"' + (q.time_s === t ? ' selected' : '') + '>' + timeLabel(t) + '</option>'; }).join('') +
       '  </select>' +
       (P.sel.length ? '<label class="ed-check"><input type="checkbox" id="edAll"' + (E.applyAll ? ' checked' : '') + '> Use this time for every question in this quiz</label>' : '') +
       '  </div>' +
-      '  <div><label class="ed-label" for="edPoints">Points</label><select id="edPoints">' +
+      '  <div id="edPointsWrap"' + (q.kind === 'poll' ? ' hidden' : '') + '><label class="ed-label" for="edPoints">Points</label><select id="edPoints">' +
       POINTS.map(function (p) { return '<option value="' + p[0] + '"' + (q.points === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
       '  </select><p class="ed-hint" id="edPointsHint"></p></div>' +
       '</div>' +
@@ -1496,10 +1702,21 @@
     if (!E.open) return;
     var q = E.q;
     var n = $('edTextN'); if (n) n.textContent = (200 - q.text.length) + ' left';
-    var add = $('edAdd'); if (add) add.disabled = q.options.length >= 6;
+    var add = $('edAdd'); if (add) add.disabled = q.options.length >= ED_LIMITS[q.kind][1];
     var rh = $('edRightHint'); if (rh) rh.textContent = q.multi ? 'tick every right answer' : 'tick the right one';
     var h = $('edPointsHint');
-    if (h) h.textContent = q.points === 'double' ? '500 to 1,000 points become 1,000 to 2,000.' : q.points === 'none' ? 'Counts as right or wrong, but scores nothing.' : '500 to 1,000 points, faster scores more.';
+    if (h) {
+      h.textContent = q.points === 'double' ? '500 to 1,000 points become 1,000 to 2,000.' : q.points === 'none' ? 'Counts as right or wrong, but scores nothing.' : '500 to 1,000 points, faster scores more.';
+      if (q.kind === 'slider' && q.points !== 'none') h.textContent += ' The exact number gets it all, the edge of the margin half.';
+      if (q.kind === 'puzzle' && q.points !== 'none') h.textContent += ' Only for the whole order right.';
+    }
+    var sh = $('edSlHint');
+    if (sh) {
+      var c = edSliderCheck();
+      sh.textContent = typeof c === 'string' ? c : 'Phones slide from ' + Q.fmt(c.min, c.step) + ' to ' + Q.fmt(c.max, c.step) + ' in steps of ' + Q.fmt(c.step, c.step) +
+        '. ' + (c.margin ? 'Guesses from ' + Q.fmt(c.answer - c.margin, c.step) + ' to ' + Q.fmt(c.answer + c.margin, c.step) + ' score.' : 'Only exactly ' + Q.fmt(c.answer, c.step) + ' scores.');
+      sh.className = 'ed-hint' + (typeof c === 'string' ? ' warn' : '');
+    }
     var del = $('edDelete');
     if (del) { var armed = E.armDelete > Date.now(); del.textContent = armed ? 'Delete for good?' : 'Delete'; del.className = 'pk-btn' + (armed ? ' arm' : ''); }
     $('edMsg').textContent = E.msg;
@@ -1508,16 +1725,53 @@
     save.textContent = E.saving ? 'Saving...' : 'Save question';
   }
 
+  // The same rules as host_bank_save. Returns the numbers, or what is wrong.
+  function edSliderCheck() {
+    var s = E.q.slider, n = {};
+    var keys = ['min', 'max', 'step', 'answer', 'margin'];
+    for (var i = 0; i < keys.length; i++) {
+      var t = String(s[keys[i]] == null ? '' : s[keys[i]]).replace(/,/g, '').trim();
+      if (!/^-?\d+(\.\d{1,2})?$/.test(t)) return 'Use plain numbers (up to 2 decimals) for every slider field.';
+      n[keys[i]] = Number(t);
+    }
+    var cents = function (x) { return Math.round(x * 100); };
+    if (n.min >= n.max) return 'Highest must be more than lowest.';
+    if (n.step < 0.01) return 'The step must be at least 0.01.';
+    if ((cents(n.max) - cents(n.min)) % cents(n.step)) return 'Highest minus lowest must be a whole number of steps.';
+    if ((n.max - n.min) / n.step > 1000) return 'Use at most 1,000 steps: make the step bigger.';
+    if (n.answer < n.min || n.answer > n.max) return 'The right answer must be between lowest and highest.';
+    if ((cents(n.answer) - cents(n.min)) % cents(n.step)) return 'The right answer must land on a step.';
+    if (n.margin < 0 || n.margin > n.max - n.min) return 'The margin must be between 0 and the whole range.';
+    if (/[<>"]/.test(s.unit || '')) return 'The unit cannot have < > or " in it.';
+    n.unit = String(s.unit || '').replace(/\s+/g, ' ').trim();
+    return n;
+  }
+
   function edCheck() {
-    var q = E.q;
-    var opts = q.options.map(function (t) { return t.replace(/\s+/g, ' ').trim(); });
+    var q = E.q, k = q.kind;
+    if (!q.text.trim()) return 'Type the question.';
+    if (!q.module.trim()) return 'Give it a set, for example Meetup.';
+    if (k === 'slider') return edSliderCheck();
+    var clean = q.options.map(function (t) { return t.replace(/\s+/g, ' ').trim(); });
+    if (k === 'type' || k === 'puzzle') {
+      var list = k === 'type' ? clean.filter(Boolean) : clean, seen = {}, dup = false;
+      if (k === 'type' && !list.length) return 'Type the answer.';
+      if (k === 'puzzle' && list.some(function (t) { return !t; })) return 'Fill in every item, or remove the empty one.';
+      list.forEach(function (t) { var key = t.toLowerCase().replace(/\s+/g, ''); if (seen[key]) dup = true; seen[key] = 1; });
+      if (dup) return k === 'type' ? 'Two accepted answers are the same.' : 'Two items are the same. Every item must be different.';
+      return { options: list, correct: [] };
+    }
+    if (k === 'poll') {
+      var votes = clean.filter(function (t, i) { return t || i < 2; });
+      if (votes.length < 2 || !votes[0] || !votes[1]) return 'Fill in answers A and B.';
+      return { options: votes, correct: [] };
+    }
+    var opts = clean;
     // Drop empty optional answers (C to F) and move the ticks with the answers that stay.
     var keep = [], right = [];
     opts.forEach(function (t, i) {
       if (t || i < 2) { if (q.right.indexOf(i) >= 0 && t) right.push(keep.length); keep.push(t); }
     });
-    if (!q.text.trim()) return 'Type the question.';
-    if (!q.module.trim()) return 'Give it a set, for example Meetup.';
     if (keep.length < 2 || keep.slice(0, 2).some(function (t) { return !t; })) return 'Fill in answers A and B.';
     if (!right.length) return q.multi ? 'Tick at least one right answer.' : 'Tick the right answer.';
     if (q.multi && right.length === keep.length) return 'Leave at least one wrong answer.';
@@ -1528,9 +1782,12 @@
     if (E.saving) return;
     var c = edCheck();
     if (typeof c === 'string') { E.msg = c; return edSync(); }
-    var q = E.q, payload = {
-      id: q.id, module: q.module.trim(), category: q.category.trim(), text: q.text.trim(),
-      options: c.options, correct_index: c.correct[0], correct: c.correct, multi: !!q.multi && c.correct.length > 0,
+    var q = E.q, sl = q.kind === 'slider';
+    var payload = {
+      id: q.id, kind: q.kind, module: q.module.trim(), category: q.category.trim(), text: q.text.trim(),
+      options: sl ? [] : c.options, correct_index: sl ? 0 : c.correct[0] || 0, correct: sl ? [] : c.correct,
+      multi: q.kind === 'choice' && !!q.multi && c.correct.length > 0,
+      slider: sl ? { min: c.min, max: c.max, step: c.step, answer: c.answer, margin: c.margin, unit: c.unit } : null,
       explanation: q.explanation.trim(),
       note: q.note.trim(), verified: !!q.verified, time_s: Number(q.time_s), points: q.points
     };
@@ -1543,7 +1800,10 @@
         E.msg = r.network ? 'No connection. Nothing was saved.'
           : ({ bad_text: 'The question must be 1 to 200 characters.', bad_module: 'The set name must be 1 to 40 characters.',
                bad_category: 'The label must be 30 characters or fewer.', bad_explanation: 'The explanation or note is too long.',
-               bad_options: 'Each answer must be 1 to 120 characters, with 2 to 4 answers.', bad_correct: 'Tick the right answer.',
+               bad_options: ({ type: 'Give 1 to 4 different accepted answers, 40 characters each at most.',
+                 puzzle: 'Give 3 or 4 different items, 120 characters each at most.' })[q.kind] || 'Each answer must be 1 to 120 characters, with 2 to 6 answers.',
+               bad_slider: 'Check the slider numbers.', bad_kind: 'Pick a question type.',
+               bad_correct: 'Tick the right answer.',
                bad_time: 'Pick a time limit.', bad_points: 'Pick the points.', not_found: 'This question was deleted. Close the editor.' })[note] ||
             (r.error && /find the function|does not exist/i.test(r.error)
               ? 'The editor is not switched on in Supabase yet. Run migrations/question_editor.sql in the SQL editor.'
@@ -1615,6 +1875,7 @@
     else if (t.id === 'edExpl') q.explanation = t.value;
     else if (t.id === 'edNote') q.note = t.value;
     else if (t.classList.contains('ed-opt')) q.options[Number(t.getAttribute('data-i'))] = t.value;
+    else if (t.hasAttribute('data-sl')) q.slider[t.getAttribute('data-sl')] = t.value;
     if (E.armDelete === -1) E.armDelete = 0;
     E.msg = '';
     edSync();
@@ -1631,8 +1892,9 @@
     else if (t.id === 'edMulti') {
       q.multi = t.value === '1';
       if (!q.multi) q.right = [q.right.length ? q.right[0] : 0];
-      $('edAnswers').innerHTML = edAnswers();
+      edRefresh();
     }
+    else if (t.id === 'edKind') edSetKind(t.value);
     else if (t.id === 'edTime') q.time_s = Number(t.value);
     else if (t.id === 'edPoints') q.points = t.value;
     else if (t.id === 'edVerified') q.verified = t.checked;
@@ -1647,8 +1909,8 @@
     if (a === 'save') return edSave();
     if (a === 'cancel') return closeEditor();
     if (a === 'delete') return edDelete();
-    if (a === 'add' && q.options.length < 6) q.options.push('');
-    else if (a === 'remove' && q.options.length > 2) {
+    if (a === 'add' && q.options.length < ED_LIMITS[q.kind][1]) q.options.push('');
+    else if (a === 'remove' && q.options.length > ED_LIMITS[q.kind][0]) {
       var i = Number(b.getAttribute('data-i'));
       q.options.splice(i, 1);
       q.right = q.right.filter(function (x) { return x !== i; }).map(function (x) { return x > i ? x - 1 : x; });
@@ -1658,10 +1920,11 @@
       q.options = ['True', 'False'];
       q.multi = false;
       q.right = [q.right[0] > 1 ? 0 : q.right[0]];
-      var ms = $('edMulti'); if (ms) ms.value = '0';
     }
     E.msg = '';
-    $('edAnswers').innerHTML = edAnswers();
+    edRefresh();
+    var focus = a === 'add' && document.querySelectorAll('#edAnswers .ed-opt');
+    if (focus && focus.length) focus[focus.length - 1].focus();
     edSync();
   });
   $('pkEdit').addEventListener('keydown', function (e) {

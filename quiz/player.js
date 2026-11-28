@@ -14,6 +14,7 @@
     game: null,
     choice: null, choiceIdx: null,
     ticks: [], tickIdx: null,   // multi-select: answers ticked but not sent yet
+    order: [], typed: '', slide: null,  // puzzle order, typed answer and slider guess not sent yet (for question tickIdx)
     lock: null,          // 'sending' | 'locked' | 'late' for question choiceIdx
     sendError: '',
     result: null,
@@ -51,13 +52,17 @@
   function noteResult(res, cardMode) {
     if (!res || cardMode) return;
     var h = hist(), i = res.question_idx;
-    h.ok[i] = res.answered && res.is_correct ? 1 : 0;
+    h.ok[i] = res.kind === 'poll' ? 'p' : res.answered && res.is_correct ? 1 : 0;
     if (res.rank) h.rank[i] = res.rank;
     Q.local.setJSON(HKEY, h);
   }
   function streak(idx) {
     var h = hist(), n = 0;
-    for (var i = idx; i >= 0 && h.ok[i] === 1; i--) n++;
+    for (var i = idx; i >= 0; i--) {
+      if (h.ok[i] === 'p') continue;
+      if (h.ok[i] !== 1) break;
+      n++;
+    }
     return n;
   }
 
@@ -81,8 +86,10 @@
       }
       st.player = d.player;
       takeGame(d.game, true);
-      if (d.choice != null && st.game) {
-        st.choice = st.game.multi && d.choices ? d.choices : d.choice;
+      var sent = d.answered != null ? d.answered : d.choice != null;
+      if (sent && st.game) {
+        var k = Q.kind(st.game);
+        st.choice = k === 'choice' || k === 'poll' ? (st.game.multi && d.choices ? d.choices : d.choice) : d.response;
         st.choiceIdx = st.game.current_index; st.lock = 'locked';
       }
       if (d.total != null) st.total = d.total;
@@ -109,7 +116,7 @@
     if (row.current_index !== st.choiceIdx) {
       st.choice = null; st.choiceIdx = null; st.lock = null; st.sendError = '';
     }
-    if (row.current_index !== st.tickIdx) { st.ticks = []; st.tickIdx = row.current_index; }
+    if (row.current_index !== st.tickIdx) { st.ticks = []; st.order = []; st.typed = ''; st.slide = null; st.tickIdx = row.current_index; }
     if (row.status === 'lobby') { st.hist = null; Q.local.del(HKEY); st.shownRes = null; st.shownFinal = false; }
     if (fromSync) return true;
     var s = row.status;
@@ -204,10 +211,20 @@
     render();
   }
 
+  // Puzzle: tap the items first to last; tap a placed one to take it (and the ones after it) back.
+  function placeItem(i) {
+    var g = st.game;
+    if (!g || g.status !== 'question' || st.lock === 'sending' || st.lock === 'locked') return;
+    var k = st.order.indexOf(i);
+    if (k >= 0) st.order = st.order.slice(0, k); else st.order.push(i);
+    buzz(8);
+    render();
+  }
+
   function answer(i) {
     var g = st.game;
     if (!g || g.status !== 'question' || st.lock === 'sending' || st.lock === 'locked') return;
-    var idx = g.current_index;
+    var idx = g.current_index, k = Q.kind(g);
     var many = Array.isArray(i);
     if (many && !i.length) return;
     st.choice = many ? i.slice() : i; st.choiceIdx = idx; st.lock = 'sending'; st.sendError = '';
@@ -219,9 +236,11 @@
     var tries = 0;
     (function send() {
       tries++;
-      var call = many
-        ? Q.rpc('submit_answers', { p_player: st.playerId, p_question_idx: idx, p_choices: i }, 6000)
-        : Q.rpc('submit_answer', { p_player: st.playerId, p_question_idx: idx, p_choice: i }, 6000);
+      var call = k === 'type' || k === 'slider' || k === 'puzzle'
+        ? Q.rpc('submit_response', { p_player: st.playerId, p_question_idx: idx, p_value: i }, 6000)
+        : many
+          ? Q.rpc('submit_answers', { p_player: st.playerId, p_question_idx: idx, p_choices: i }, 6000)
+          : Q.rpc('submit_answer', { p_player: st.playerId, p_question_idx: idx, p_choice: i }, 6000);
       call.then(function (r) {
         if (!st.game || st.game.current_index !== idx) return;
         if (!r.error || r.error === 'duplicate') { st.lock = 'locked'; st.netOk = true; }
@@ -229,6 +248,7 @@
         else if (r.network) { st.lock = null; st.choice = null; st.sendError = 'Could not send. Tap again.'; st.netOk = false; }
         else if (r.error === 'player_not_found') { Q.local.del(KEY); st.playerId = null; st.player = null; }
         else if (r.error === 'card_mode') { st.lock = null; st.choice = null; }
+        else if (r.error === 'bad_answer' || r.error === 'bad_choice') { st.lock = null; st.choice = null; st.sendError = 'That answer did not go through. Try again.'; }
         else { st.lock = 'late'; }
         render(); updateBanner();
       });
@@ -326,10 +346,10 @@
     if (g.status === 'lobby') return 'lobby';
     if (g.status === 'question') {
       if (g.card_mode) return 'card:' + idx;
-      if (st.choiceIdx === idx && st.lock === 'locked') return 'locked:' + idx + ':' + st.choice;
-      if (st.choiceIdx === idx && st.lock === 'sending') return 'sending:' + idx + ':' + st.choice;
+      if (st.choiceIdx === idx && st.lock === 'locked') return 'locked:' + idx + ':' + encodeURIComponent(String(st.choice));
+      if (st.choiceIdx === idx && st.lock === 'sending') return 'sending:' + idx + ':' + encodeURIComponent(String(st.choice));
       if (st.lock === 'late' || Q.remaining(g) <= 0) return 'late:' + idx;
-      return 'open:' + idx + ':' + st.sendError + ':' + (st.tickIdx === idx ? st.ticks.join('') : '');
+      return 'open:' + idx + ':' + st.sendError + ':' + (st.tickIdx === idx ? st.ticks.join('') + '/' + st.order.join('') : '');
     }
     if (g.status === 'reveal' || g.status === 'leaderboard') {
       var have = st.result && st.result.question_idx === idx ? 'y' : 'n';
@@ -416,11 +436,90 @@
       '<p class="lede center">The first question lands here. Keep this page open.</p>';
   }
 
+  function spec(g) {
+    var s = Q.json(g.spec) || {};
+    var min = Number(s.min) || 0, max = Number(s.max), step = Number(s.step) || 1;
+    if (!(max > min)) max = min + step;
+    return { min: min, max: max, step: step, unit: s.unit ? String(s.unit) : '' };
+  }
+  function snap(v, sp) {
+    var n = Math.round((v - sp.min) / sp.step);
+    return Math.min(sp.max, Math.max(sp.min, Math.round((sp.min + n * sp.step) * 100) / 100));
+  }
+  function unitHtml(sp) { return sp.unit ? ' <small>' + Q.esc(sp.unit) + '</small>' : ''; }
+
+  // The answer part of a type, slider or puzzle question.
+  function viewTyped(g, locked, late) {
+    if (g.card_mode) return '<p class="status-line">Card round. Write your team\'s answer on the card.</p>';
+    if (locked) {
+      return '<div class="card mine-box"><p class="label">Your answer</p><p class="mine">' + Q.esc(st.choice) + '</p></div>' +
+        '<p class="status-line">' + (st.lock === 'sending' ? 'Sending...' : 'Answer locked. Waiting for everyone.') + '</p>';
+    }
+    if (late) return '<p class="status-line">Time\'s up.</p>';
+    return '<form id="typeForm" class="type-box" novalidate autocomplete="off">' +
+      '<input id="typeIn" maxlength="40" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type your answer" value="' + Q.esc(st.typed) + '" aria-label="Your answer">' +
+      '<button class="primary" type="submit" id="typeGo"' + (st.typed.trim() ? '' : ' disabled') + '>Submit</button></form>' +
+      (st.sendError ? '<p class="status-line error">' + Q.esc(st.sendError) + '</p>' : '');
+  }
+
+  function viewSlide(g, locked, late) {
+    var sp = spec(g);
+    var ends = '<div class="slide-ends"><span>' + Q.fmt(sp.min, sp.step) + '</span><span>' + Q.fmt(sp.max, sp.step) + '</span></div>';
+    if (g.card_mode) return '<div class="card slide-box">' + ends + '</div><p class="status-line">Card round. Write your team\'s number on the card.</p>';
+    if (locked) {
+      return '<div class="card mine-box"><p class="label">Your guess</p><p class="mine">' + Q.fmt(st.choice, sp.step) + unitHtml(sp) + '</p></div>' +
+        '<p class="status-line">' + (st.lock === 'sending' ? 'Sending...' : 'Guess locked. Waiting for everyone.') + '</p>';
+    }
+    if (late) return '<p class="status-line">Time\'s up.</p>';
+    if (st.slide == null) st.slide = snap((sp.min + sp.max) / 2, sp);
+    return '<div class="card slide-box">' +
+      '<p class="slide-val"><span id="slideVal">' + Q.fmt(st.slide, sp.step) + '</span>' + unitHtml(sp) + '</p>' +
+      '<input type="range" id="slideIn" min="' + sp.min + '" max="' + sp.max + '" step="' + sp.step + '" value="' + st.slide + '" aria-label="Your guess">' + ends +
+      '<div class="slide-nudge"><button type="button" data-nudge="-1" aria-label="Less">&minus;</button><button type="button" data-nudge="1" aria-label="More">+</button></div>' +
+      '</div><button type="button" class="primary" id="slideGo">Submit ' + Q.fmt(st.slide, sp.step) + '</button>' +
+      (st.sendError ? '<p class="status-line error">' + Q.esc(st.sendError) + '</p>' : '');
+  }
+
+  function viewPuzzle(g, locked, late) {
+    var o = opts(g), mine = locked && Array.isArray(st.choice) ? st.choice : st.order;
+    var tiles = o.map(function (text, i) {
+      var at = mine.indexOf(i);
+      var dis = g.card_mode || locked || late ? ' disabled' : '';
+      return '<button type="button" class="answer tile t' + i + (at >= 0 ? ' placed' : '') + '" data-place="' + i + '"' + dis + '>' +
+        '<span class="badge">' + (at >= 0 ? at + 1 : letter(i)) + '</span><span>' + Q.esc(text) + '</span></button>';
+    }).join('');
+    var status = '';
+    if (g.card_mode) status = '<p class="status-line">Card round. Write the letters in the right order.</p>';
+    else if (locked) status = '<p class="status-line">' + (st.lock === 'sending' ? 'Sending...' : 'Order locked. Waiting for everyone.') + '</p>';
+    else if (late) status = '<p class="status-line">Time\'s up.</p>';
+    else {
+      var all = st.order.length === o.length;
+      status = '<p class="status-line hint">' + (st.order.length ? 'Tap a numbered one to undo it.' : 'Tap them in order, first to last.') + '</p>' +
+        '<button type="button" class="primary multi-go" id="puzzleGo"' + (all ? '' : ' disabled') + '>' +
+        (all ? 'Submit this order' : st.order.length + ' of ' + o.length + ' placed') + '</button>' +
+        (st.sendError ? '<p class="status-line error">' + Q.esc(st.sendError) + '</p>' : '');
+    }
+    return '<div class="answers puzzle' + (g.card_mode ? ' static' : locked ? ' done' : '') + '">' + tiles + '</div>' + status;
+  }
+
   function viewQuestion() {
-    var g = st.game, idx = g.current_index;
+    var g = st.game, idx = g.current_index, kind = Q.kind(g);
     var o = opts(g);
     var locked = st.choiceIdx === idx && (st.lock === 'locked' || st.lock === 'sending');
     var late = !locked && (st.lock === 'late' || Q.remaining(g) <= 0);
+    var head = '<div class="qhead"><span class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions +
+      (g.category ? ' · ' + Q.esc(g.category) : '') +
+      (kind === 'poll' ? ' · <b class="pts-tag">Poll</b>'
+        : g.points === 'double' ? ' · <b class="pts-tag">Double points</b>' : g.points === 'none' ? ' · <b class="pts-tag none">No points</b>' : '') +
+      (g.multi ? ' · <b class="pts-tag">Pick all that apply</b>' : '') +
+      ({ type: ' · <b class="pts-tag">Type it</b>', slider: ' · <b class="pts-tag">Slide it</b>', puzzle: ' · <b class="pts-tag">Put in order</b>' }[kind] || '') +
+      '</span><span class="timer" id="timer"></span></div>' +
+      '<div class="bar"><i id="bar"></i></div>' +
+      '<p class="stake" id="stake"></p>' +
+      '<p class="qtext">' + Q.esc(g.question_text) + '</p>';
+    if (kind === 'type') return head + viewTyped(g, locked, late);
+    if (kind === 'slider') return head + viewSlide(g, locked, late);
+    if (kind === 'puzzle') return head + viewPuzzle(g, locked, late);
     var cls = (g.card_mode ? 'static' : (locked || late ? 'locked' : '')) + (o.length === 2 ? ' two' : o.length > 4 ? ' many' : '') +
       (g.multi ? ' multi' : '');
     var ticks = st.tickIdx === idx ? st.ticks : [];
@@ -433,27 +532,44 @@
     var status = '';
     if (g.card_mode) status = '<p class="status-line">Card round. Hold up your team\'s card.</p>';
     else if (st.lock === 'sending' && locked) status = '<p class="status-line">Sending...</p>';
-    else if (locked) status = '<p class="status-line">Answer locked. Waiting for everyone.</p>';
+    else if (locked) status = '<p class="status-line">' + (kind === 'poll' ? 'Vote in.' : 'Answer locked.') + ' Waiting for everyone.</p>';
     else if (late) status = '<p class="status-line">Time\'s up.</p>';
     else if (st.sendError) status = '<p class="status-line error">' + Q.esc(st.sendError) + '</p>';
     if (g.multi && !g.card_mode && !locked && !late) {
       status = '<button type="button" class="primary multi-go" id="multiGo"' + (ticks.length ? '' : ' disabled') + '>' +
         (ticks.length ? 'Submit ' + ticks.length + (ticks.length === 1 ? ' answer' : ' answers') : 'Tick every right answer') + '</button>' + status;
     }
-    return '' +
-      '<div class="qhead"><span class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions +
-      (g.category ? ' · ' + Q.esc(g.category) : '') +
-      (g.points === 'double' ? ' · <b class="pts-tag">Double points</b>' : g.points === 'none' ? ' · <b class="pts-tag none">No points</b>' : '') +
-      (g.multi ? ' · <b class="pts-tag">Pick all that apply</b>' : '') +
-      '</span><span class="timer" id="timer"></span></div>' +
-      '<div class="bar"><i id="bar"></i></div>' +
-      '<p class="stake" id="stake"></p>' +
-      '<p class="qtext">' + Q.esc(g.question_text) + '</p>' +
-      '<div class="answers ' + cls + '">' + buttons + '</div>' + status;
+    return head + '<div class="answers ' + cls + '">' + buttons + '</div>' + status;
   }
 
-  function revealedBox(g) {
-    var o = opts(g), set = Q.rightSet(g).filter(function (r) { return o[r] != null; });
+  function revealedBox(g, res) {
+    var o = opts(g), kind = Q.kind(g), ans = Q.json(g.answer) || {};
+    var expl = g.explanation ? '<p class="explain">' + Q.esc(g.explanation) + '</p>' : '';
+    var mine = res && res.answered && res.response != null ? res.response : null;
+    if (kind === 'poll') return '<p class="lede center">The votes are on the big screen.</p>' + expl;
+    if (kind === 'type') {
+      var acc = ans.accept || [];
+      if (!acc.length) return '';
+      return '<div><p class="label">' + (acc.length > 1 ? 'Accepted answers' : 'Right answer') + '</p>' + acc.map(function (t) {
+        return '<div class="reveal-answer tile t0"><span class="badge">&#10003;</span><span>' + Q.esc(t) + '</span></div>';
+      }).join('') + (mine != null ? '<p class="explain">You typed: <b>' + Q.esc(mine) + '</b></p>' : '') + '</div>' + expl;
+    }
+    if (kind === 'slider') {
+      if (ans.answer == null) return '';
+      var sp = spec(g);
+      return '<div class="card slide-res"><p class="label">Right answer</p><p class="mine">' + Q.fmt(ans.answer, sp.step) + unitHtml(sp) + '</p>' +
+        '<p class="explain">' + (Number(ans.margin) ? 'Anything within ' + Q.fmt(ans.margin, sp.step) + ' scored.' : 'Only the exact number scored.') +
+        (mine != null ? ' You said <b>' + Q.fmt(mine, sp.step) + '</b>.' : '') + '</p></div>' + expl;
+    }
+    if (kind === 'puzzle') {
+      var order = ans.order || [];
+      if (!order.length) return '';
+      return '<div><p class="label">Right order</p>' + order.map(function (r, n) {
+        var hit = Array.isArray(mine) ? (mine[n] === r ? ' hit' : ' miss') : '';
+        return '<div class="reveal-answer tile t' + r + hit + '"><span class="badge">' + (n + 1) + '</span><span>' + Q.esc(o[r]) + '</span></div>';
+      }).join('') + '</div>' + expl;
+    }
+    var set = Q.rightSet(g).filter(function (r) { return o[r] != null; });
     if (!set.length) return '';
     return '<div><p class="label">' + (set.length > 1 ? 'Right answers' : 'Right answer') + '</p>' +
       set.map(function (r) {
@@ -471,14 +587,26 @@
     return '<div class="rankline"><span>You\'re <b>' + Q.ordinal(res.rank) + '</b> of ' + res.players + '</span>' + mv + '</div>';
   }
 
+  // A slider guess inside the margin is right; the exact number is spot on.
+  function verdictRight(g, res) {
+    if (Q.kind(g) !== 'slider') return 'Correct';
+    var ans = Q.json(g.answer) || {};
+    return Number(res.response) === Number(ans.answer) ? 'Spot on' : 'Close enough';
+  }
+
   function viewResult() {
-    var g = st.game, idx = g.current_index;
+    var g = st.game, idx = g.current_index, kind = Q.kind(g);
     var res = st.result && st.result.question_idx === idx ? st.result : null;
     var top, rank = '';
     if (g.card_mode && !(res && res.answered)) {
       top = '<div class="card result"><p class="verdict">Card round</p><p class="total">Your total ' + Q.num(st.total) + '</p></div>';
     } else if (!res) {
       top = '<div class="card result"><p class="lede">Checking your answer<span class="dots" style="margin-left:8px"><i></i><i></i><i></i></span></p></div>';
+    } else if (kind === 'poll') {
+      top = '<div class="card result poll"><div class="mark">' + (res.answered ? ICON.check : ICON.clock) + '</div>' +
+        '<p class="verdict">' + (res.answered ? 'Vote counted' : 'No vote') + '</p>' +
+        '<p class="banter">' + (res.answered ? 'No points on a poll. Just vibes.' : 'This one was just for fun.') + '</p>' +
+        '<p class="total">Total ' + Q.num(st.total) + '</p></div>';
     } else if (!res.answered) {
       top = '<div class="card result bad"><div class="mark">' + ICON.clock + '</div><p class="verdict">No answer</p>' +
         '<p class="banter">' + banter('none', idx) + '</p><p class="points">+0 points</p>' +
@@ -495,7 +623,7 @@
       var part = !res.is_correct && res.points > 0;  // multi-select: some right answers, no wrong ones
       top = '<div class="card result ' + (res.is_correct || part ? 'good' : 'bad') + '">' +
         '<div class="mark">' + (res.is_correct || part ? ICON.check : ICON.cross) + '</div>' +
-        '<p class="verdict">' + (res.is_correct ? 'Correct' : part ? 'Partly right' : 'Not quite') + '</p>' +
+        '<p class="verdict">' + (res.is_correct ? verdictRight(g, res) : part ? 'Partly right' : 'Not quite') + '</p>' +
         '<p class="banter">' + (part ? 'Some of them. Partial points banked.' : banter(res.is_correct ? 'good' : 'bad', idx)) + '</p>' +
         '<p class="points">+<span id="pts">' + Q.num(res.points) + '</span> points</p>' +
         '<div class="chips">' + chips + '</div>' +
@@ -503,7 +631,7 @@
       rank = rankLine(res, idx);
     }
     var foot = g.status === 'leaderboard' ? '<p class="status-line">Leaderboard is on the big screen.</p>' : '';
-    return '<p class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions + '</p>' + top + rank + revealedBox(g) + foot;
+    return '<p class="qmeta">Question ' + (idx + 1) + ' of ' + g.total_questions + '</p>' + top + rank + revealedBox(g, res) + foot;
   }
 
   function viewFinal() {
@@ -544,6 +672,7 @@
     var card = document.querySelector('.result');
     if (card) card.classList.add('show');
     if (g.card_mode && !res.answered) return;
+    if (Q.kind(g) === 'poll') { if (res.answered) buzz(20); return; }
     if (res.answered && res.is_correct) {
       buzz([30, 50, 30, 50, 70]);
       var r = card ? card.getBoundingClientRect() : null;
@@ -585,7 +714,7 @@
       });
     }
     if (kind === 'open') {
-      Array.prototype.forEach.call(document.querySelectorAll('.answer'), function (b) {
+      Array.prototype.forEach.call(document.querySelectorAll('.answer[data-choice]'), function (b) {
         b.addEventListener('click', function () {
           var i = Number(b.getAttribute('data-choice'));
           if (st.game && st.game.multi) toggleTick(i); else answer(i);
@@ -593,6 +722,39 @@
       });
       var go = document.getElementById('multiGo');
       if (go) go.addEventListener('click', function () { answer((st.ticks || []).slice()); });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-place]'), function (b) {
+        b.addEventListener('click', function () { placeItem(Number(b.getAttribute('data-place'))); });
+      });
+      var pg = document.getElementById('puzzleGo');
+      if (pg) pg.addEventListener('click', function () { if (st.order.length === opts(st.game).length) answer(st.order.slice()); });
+      var tf = document.getElementById('typeForm');
+      if (tf) {
+        var ti = document.getElementById('typeIn'), tg = document.getElementById('typeGo');
+        ti.addEventListener('input', function () { st.typed = ti.value; tg.disabled = !ti.value.trim(); });
+        tf.addEventListener('submit', function (e) {
+          e.preventDefault();
+          var v = ti.value.replace(/\s+/g, ' ').trim();
+          if (!v) return;
+          ti.blur();
+          answer(v);
+        });
+      }
+      var si = document.getElementById('slideIn');
+      if (si) {
+        var sp = spec(st.game);
+        var show = function () {
+          document.getElementById('slideVal').textContent = Q.fmt(st.slide, sp.step);
+          document.getElementById('slideGo').textContent = 'Submit ' + Q.fmt(st.slide, sp.step);
+        };
+        si.addEventListener('input', function () { st.slide = snap(Number(si.value), sp); show(); });
+        Array.prototype.forEach.call(document.querySelectorAll('[data-nudge]'), function (b) {
+          b.addEventListener('click', function () {
+            st.slide = snap(st.slide + Number(b.getAttribute('data-nudge')) * sp.step, sp);
+            si.value = st.slide; buzz(6); show();
+          });
+        });
+        document.getElementById('slideGo').addEventListener('click', function () { answer(st.slide); });
+      }
     }
     if (kind === 'res') celebrateResult();
     if (kind === 'final') celebrateFinal();
@@ -622,6 +784,7 @@
       var sHtml = '', sCls = 'stake';
       if (g.card_mode) sHtml = '';
       else if (mine) { sHtml = '<b>Locked in</b> fingers crossed'; sCls += ' locked'; }
+      else if (left > 0 && Q.kind(g) === 'poll') sHtml = '<b>Poll</b> no right answer, no points';
       else if (left > 0 && g.points === 'none') sHtml = '<b>Just for fun</b> no points on this one';
       else if (left > 0) {
         var pts = (500 + Math.round(500 * Math.min(1, left / (g.duration_s || 20)))) * (g.points === 'double' ? 2 : 1);

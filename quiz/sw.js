@@ -1,7 +1,7 @@
 // Registered by host.html only. Network first, cache as fallback, so the host
 // page and its scripts still load after a reload with the internet down.
 // Supabase API calls are never cached.
-var CACHE = 'arc-ph-quiz-v2';
+var CACHE = 'arc-ph-quiz-v3';
 var PRECACHE = ['host.html', 'host.css', 'host.js', 'quiz.css', 'common.js', 'config.js',
   'Arc_Logo_White.svg',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.min.js',

@@ -24,6 +24,21 @@
     if (Array.isArray(s) && s.length) return s.map(Number);
     return g.revealed_index == null ? [] : [Number(g.revealed_index)];
   };
+  // Question types: choice (pick the right answer, one or several), poll (no right
+  // answer), type (type the answer), slider (guess a number), puzzle (put in order).
+  Q.kind = function (g) { return (g && g.kind) || 'choice'; };
+  Q.KIND_LABEL = { choice: 'Quiz', poll: 'Poll', type: 'Type answer', slider: 'Slider', puzzle: 'Puzzle' };
+  Q.json = function (v) {
+    if (typeof v === 'string') { try { return JSON.parse(v); } catch (e) { return null; } }
+    return v == null ? null : v;
+  };
+  // A slider number with as many decimals as its step has.
+  Q.fmt = function (n, step) {
+    var s = String(step == null ? 1 : step), d = s.indexOf('.') >= 0 ? Math.min(2, s.length - s.indexOf('.') - 1) : 0;
+    n = Number(n || 0);
+    // No thousands comma below 10,000, so years read as 2008, not 2,008.
+    return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: Math.abs(n) >= 10000 });
+  };
   Q.joinAnd = function (list) {
     return list.length < 2 ? list.join('') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
   };

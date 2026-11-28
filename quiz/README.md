@@ -46,13 +46,21 @@ If the database was created before the bank existed, run `migrations/question_ba
 
 ### Writing and editing questions
 
-In the picker, press **New question**, or click a question and press **Edit** or **Duplicate**. Set the question, two to six answers (tick the right one, or press **True or false**; switch **Single answer** to **Multi-select** to tick several right answers), the label shown on the big screen, the time limit (5 seconds to 4 minutes), the points (Standard, Double points or No points), an explanation for after the reveal and a private note. Tick **Answer checked** once you have checked the answer. **Delete** takes two clicks.
+In the picker, press **New question**, or click a question and press **Edit** or **Duplicate**. Pick the **Question type** first:
+
+- **Quiz**: pick the right answer (or several, with Multi-select).
+- **Poll**: two to six answers, no right one. The big screen shows how the room voted. Nobody scores.
+- **Type answer**: players type their answer. List up to four ways to write it (for example `USDC` and `USD Coin`). Capitals and spaces don't count, spelling does. The big screen shows the most common answers typed, leaving rude ones out.
+- **Slider**: players slide to a number. Set the lowest and highest numbers, the step, the right answer, how far off still scores, and an optional unit.
+- **Puzzle**: three or four items, typed in the right order. Phones get them shuffled and players tap them first to last.
+
+For a Quiz question, set the question, two to six answers (tick the right one, or press **True or false**; switch **Single answer** to **Multi-select** to tick several right answers), the label shown on the big screen, the time limit (5 seconds to 4 minutes), the points (Standard, Double points or No points), an explanation for after the reveal and a private note. Tick **Answer checked** once you have checked the answer. **Delete** takes two clicks.
 
 A new question goes straight into the quiz you are building; press **Save quiz** to put it in play. Editing a question that is already in the saved quiz updates the quiz too, as long as the game is in the lobby. **Use this time for every question in this quiz** sets one time limit for the whole quiz. The editor shows the right answer, so keep the projector off the laptop screen while you use it.
 
-Points: a right answer scores 500 to 1,000 (faster scores more). On a multi-select question players tick their answers and press Submit; they get a share of the points for each right answer ticked, and nothing if they tick any wrong one. Double points doubles that. No points still shows who was right but adds nothing. Card mode awards stay at 100 a team.
+Points: a right answer scores 500 to 1,000 (faster scores more). On a multi-select question players tick their answers and press Submit; they get a share of the points for each right answer ticked, and nothing if they tick any wrong one. On a slider, the exact number scores in full and a guess at the edge of the margin scores half; outside the margin scores nothing. A puzzle scores only when the whole order is right. A poll never scores. Double points doubles that. No points still shows who was right but adds nothing. Card mode awards stay at 100 a team.
 
-Questions you write here live in the database. Running `bank.local.sql` again puts its own 45 questions back as written in the file (overwriting edits to those), but keeps your new questions and the time and points you set. If the database was created before the editor existed, run `migrations/question_editor.sql` once first.
+Questions you write here live in the database. Running `bank.local.sql` again puts its own 45 questions back as written in the file (overwriting edits to those), but keeps your new questions and the time and points you set. If the database was created before the editor existed, run `migrations/question_editor.sql` once first. If it was created before Poll, Type answer, Slider and Puzzle existed, run `migrations/question_types.sql` once (it keeps players, scores and every question).
 
 ### Event name and teams
 
@@ -152,6 +160,9 @@ Press **Reset game** twice. This deletes all players, answers and card points an
 ## Scoring
 
 - Correct: `500 + round(500 * (1 - seconds / time limit))`, so 1000 for an instant answer and at least 500. Double points questions score twice that; No points questions score 0. Wrong or no answer: 0.
+- Multi-select: that share of the points for each right answer ticked, 0 if any wrong answer is ticked.
+- Slider: inside the margin, `points * (1 - 0.5 * distance / margin)`, so the exact number scores in full and the edge of the margin half. Outside the margin: 0.
+- Puzzle: all or nothing. Type answer: right when it matches an accepted answer, ignoring capitals and spaces. Poll: always 0.
 - Time is measured with the database clock, not the phone's.
 - One answer per player per question. Answers after 21 seconds (20 plus 1 second grace) or after the reveal are rejected.
 - Group score = average of the members' totals (players who never answered count as 0) + 100 per card-mode award. Ties go to the group with more correct answers.
@@ -159,7 +170,7 @@ Press **Reset game** twice. This deletes all players, answers and card points an
 ## How the answers stay secret
 
 - `questions` has row level security and no grants for the browser roles, so the correct index cannot be read.
-- Phones read only the `games` row, which has no correct index until the host reveals.
+- Phones read only the `games` row, which has no correct index until the host reveals. For type answer and slider questions the accepted answers and the right number are not in that row either until the reveal; puzzle items go out shuffled.
 - `submit_answer` scores on the server and returns only `{"ok": true}`.
 - Results come from `player_sync`, which only returns a result once the question is revealed.
 
