@@ -612,3 +612,9 @@ button.gs[aria-pressed="true"] .g { color: var(--dark-ink); }
 .ed-pic label.pk-btn { cursor: pointer; }
 .ed-pic-box.busy { font-size: 13px; padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--line); }
 .pk-img { display: block; max-height: 120px; max-width: 100%; border-radius: 8px; margin-top: 10px; }
+
+/* ---------- Solo battle ---------- */
+.lobby.solo .names { max-height: 48vh; }
+.lobby.solo .names span { font-size: 2.4vh; }
+.boards.one { grid-template-columns: minmax(0, 1fr); width: min(100%, 110vh); margin: 0 auto; }
+#suMode { width: 100%; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: #0f1a30; color: #fff; padding: 0 10px; font: inherit; }

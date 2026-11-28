@@ -575,22 +575,24 @@
       names = '<div class="names manage">' + (ps.length ? ps.map(function (p) {
         var arm = H.armed['rm:' + p.id] > Date.now();
         return '<button type="button" class="' + (arm ? 'arm' : '') + '" data-remove="' + p.id + '" data-name="' + esc(p.label) + '">' +
-          (arm ? 'Remove ' + esc(p.label) + '?' : esc(p.label) + ' · ' + esc(p.group)) + '</button>';
+          (arm ? 'Remove ' + esc(p.label) + '?' : esc(p.label) + (p.group ? ' · ' + esc(p.group) : '')) + '</button>';
       }).join('') : '<span>No players yet.</span>') + '</div>' +
         '<p class="note">Click a name twice to remove that player.</p>';
     } else {
-      names = '<div class="names">' + ps.slice(-24).reverse().map(function (p) {
+      names = '<div class="names">' + ps.slice(Q.SOLO ? -60 : -24).reverse().map(function (p) {
         return '<span data-id="' + p.id + '">' + esc(p.label) + '</span>';
       }).join('') + '</div>';
     }
     var shortUrl = PLAYER_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
     var total = (g && g.total_questions) || 0;
-    return '<section class="lobby">' +
+    return '<section class="lobby' + (Q.SOLO ? ' solo' : '') + '">' +
       '<div class="qr-card">' + qrSvg() + '<div class="qr-url">' + esc(shortUrl) + '</div></div>' +
       '<div class="lobby-side">' +
       '  <h1 class="h-big">Scan to <span class="grad-text">join</span></h1>' +
-      '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
-      '  <div class="lobby-groups' + (nTeams > 6 ? ' dense' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + groups + '</div>' + names +
+      (Q.SOLO
+        ? '  <p class="lobby-total">Solo battle: type your name, every player for themselves. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>'
+        : '  <p class="lobby-total">Type your name and tap your team. <b>' + ps.length + '</b> ' + (ps.length === 1 ? 'player' : 'players') + ' in.</p>' +
+          '  <div class="lobby-groups' + (nTeams > 6 ? ' dense' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + groups + '</div>') + names +
       '</div></section>';
   }
 
@@ -769,7 +771,7 @@
       var right = pctRight(g);
       if (right !== null) chip = '<span class="pct' + (right < 40 ? ' low' : '') + '">' + right + '% got it</span>';
       foot = (g.explanation ? '<p class="explain-big">' + esc(g.explanation) + '</p>' : '') +
-        (g.card_mode && g.status === 'reveal' ? cardButtons(g) : (H.hideScores ? '' : groupStrip(true)));
+        (g.card_mode && g.status === 'reveal' ? cardButtons(g) : (H.hideScores || Q.SOLO ? '' : groupStrip(true)));
     }
 
     var img = Q.imageUrl(g.image);
@@ -804,7 +806,7 @@
       if (had) bump(el);
     }
     var by = H.view && H.view.team_answers;
-    if (!box || !by) return;
+    if (!box || !by || Q.SOLO) return;
     var mem = {};
     ps.forEach(function (p) { mem[p.group] = (mem[p.group] || 0) + 1; });
     var html = Q.GROUPS.filter(function (name) { return mem[name]; }).map(function (name) {
@@ -913,6 +915,10 @@
     // With many teams the board shows the top eight; everyone is on the final podium screen.
     var cut = s.ranked.length > 8;
     var shown = cut ? s.ranked.slice(0, 8) : s.ranked;
+    if (Q.SOLO) {
+      return '<section class="is-board solo"><h1 class="h-mid">Leaderboard</h1>' +
+        '<div class="boards one"><div>' + playerRows(players().slice(0, 10), players().length > 5, true) + '</div></div></section>';
+    }
     return '<section class="is-board">' +
       '<h1 class="h-mid">Leaderboard</h1>' +
       '<div class="boards">' +
@@ -991,7 +997,7 @@
       if (!pv.any) return name + ' takes the early lead!';
       return was && was.rank === 1 ? name + ' is still on top.' : name + ' takes the lead!';
     }
-    if (!H.hideScores) {
+    if (!H.hideScores && !Q.SOLO) {
       var first = standings().ranked[0];
       if (first && first.score > 0) return 'Team ' + first.name + ' is in front.';
     }
@@ -1005,6 +1011,10 @@
         playerRows(players().slice(0, 10), players().length > 5, false) + '</section>';
     }
     var r = s.ranked;
+    if (Q.SOLO) {
+      // Solo battle: the podium is the top players.
+      r = players().map(function (p) { return { name: p.label, score: p.total || 0, rank: p.rank }; });
+    }
     function pod(row, place) {
       if (!row) return '<div></div>';
       return '<div class="pod p' + place + '"><div class="nm">' + esc(row.name) + '</div>' +
@@ -1012,10 +1022,10 @@
     }
     var winners = r.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
     return '<section class="is-final">' +
-      '<h1 class="h-big win-title">' + (winners.length > 1 ? 'Joint winners: ' : 'Winning team: ') +
+      '<h1 class="h-big win-title">' + (winners.length > 1 ? 'Joint winners: ' : Q.SOLO ? 'Winner: ' : 'Winning team: ') +
       '<span class="grad-text">' + esc(winners.join(' and ')) + '</span></h1>' +
       '<div class="podium">' + pod(r[1], 2) + pod(r[0], 1) + pod(r[2], 3) + '</div>' +
-      '<div class="rest' + (r.length > 6 ? ' dense' : '') + '">' + r.slice(3).map(function (x) {
+      '<div class="rest' + (r.length > 6 ? ' dense' : '') + '">' + r.slice(3, Q.SOLO ? 10 : undefined).map(function (x) {
         return '<div class="lrow"><span class="r">' + x.rank + '</span><span class="nm">' + esc(x.name) + '</span><span class="sc">' + Q.num(x.score) + '</span></div>';
       }).join('') + '</div></section>';
   }
@@ -1198,12 +1208,14 @@
       }, 2600);
       if (loud) {
         sfx.drumroll(2.5);
-        var winners = standings().ranked.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
+        var winners = Q.SOLO
+          ? players().filter(function (p) { return p.rank === 1; }).map(function (p) { return p.name || p.label; })
+          : standings().ranked.filter(function (x) { return x.rank === 1; }).map(function (x) { return x.name; });
         setTimeout(function () {
-          if (!H.podiumShown) return;
+          if (!H.podiumShown || !winners.length) return;
           voice.say(winners.length > 1
             ? 'It is a tie! ' + winners.join(' and ') + ' share the win!'
-            : 'And the winning team is... Team ' + winners[0] + '!', true);
+            : Q.SOLO ? 'And the winner is... ' + winners[0] + '!' : 'And the winning team is... Team ' + winners[0] + '!', true);
         }, 900);
       }
     } else if (!podium && H.podiumShown) {
@@ -1246,6 +1258,8 @@
     $('manageBtn').setAttribute('aria-pressed', String(H.manage));
     $('questionsBtn').hidden = s !== 'lobby' || cardOn(); // the quiz can only be changed before it starts
     $('setupBtn').hidden = s !== 'lobby' || cardOn();
+    $('scoresBtn').hidden = Q.SOLO;
+    $('cardToggle').parentNode.hidden = Q.SOLO && !cardOn();
     $('scoresBtn').setAttribute('aria-pressed', String(H.hideScores));
     $('scoresBtn').textContent = H.hideScores ? 'Team scores hidden' : 'Team scores shown';
     $('soundBtn').setAttribute('aria-pressed', String(sfx.on()));
@@ -2044,11 +2058,11 @@
   // ---------------------------------------------------------------- setup: event name and teams
   // Saved on the game row, so the big screen and every phone show the same
   // event name and the same list of teams. Lobby only.
-  var S = { open: false, event: '', teams: [], saved: '', loading: false, msg: '', armClose: 0 };
+  var S = { open: false, event: '', teams: [], solo: false, saved: '', loading: false, msg: '', armClose: 0 };
 
   function suClean(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
   function suSnapshot() {
-    return JSON.stringify([suClean(S.event), S.teams.map(suClean).filter(Boolean)]);
+    return JSON.stringify([suClean(S.event), S.teams.map(suClean).filter(Boolean), S.solo]);
   }
   function suMembers() {
     var m = {};
@@ -2063,9 +2077,11 @@
     S.open = true; S.loading = false; S.msg = ''; S.armClose = 0;
     S.event = Q.EVENT;
     S.teams = Q.GROUPS.slice();
+    S.solo = Q.SOLO;
     S.saved = suSnapshot();
     $('setup').hidden = false;
     $('suEvent').value = S.event;
+    $('suMode').value = S.solo ? 'solo' : 'teams';
     suRenderTeams();
     suSync();
     $('suEvent').focus();
@@ -2104,6 +2120,10 @@
     $('suClose').textContent = armed ? 'Close without saving?' : 'Close';
     $('suClose').className = 'pk-btn' + (armed ? ' arm' : '');
     $('suCount').textContent = String(names.length);
+    ['suTeamsHead', 'suTeams', 'suTeamsHint'].forEach(function (id) { $(id).hidden = S.solo; });
+    $('suModeHint').textContent = S.solo
+      ? 'Players join with just their name. No teams or team scores; the final podium is the top three players.'
+      : 'Players pick a team when they join. Team scores show on the big screen.';
     $('suAdd').disabled = S.teams.length >= 20;
     Array.prototype.forEach.call(document.querySelectorAll('#suTeams [data-su="remove"]'), function (b) {
       b.disabled = S.teams.length <= 2;
@@ -2125,17 +2145,18 @@
     if (S.msg) return suSync();
     S.loading = true;
     suSync();
-    call('host_set_setup', { p_event: ev, p_teams: names }).then(function (r) {
+    call('host_set_setup', { p_event: ev, p_teams: names, p_solo: S.solo }).then(function (r) {
       S.loading = false;
       var note = r.data && r.data.note;
       if (r.network) S.msg = 'No connection. Nothing was saved.';
       else if (note === 'setup_saved') {
-        toast('Saved. ' + names.length + ' teams.');
+        toast(S.solo ? 'Saved. Solo battle.' : 'Saved. ' + names.length + ' teams.');
         closeSetup(true);
         H.seen = null;
         render();
         return;
       }
+      else if (note === 'players_in') S.msg = 'Players have already joined. Switching between teams and solo needs an empty lobby: reset the game first.';
       else if (note === 'team_in_use') S.msg = 'A team with players in it cannot be removed or renamed. Remove those players first (Players button), or reset the game.';
       else if (note === 'bad_teams') S.msg = 'Team names must all be different, 20 characters or fewer, with no < > or " in them.';
       else if (note === 'bad_team_count') S.msg = 'Use between 2 and 20 teams.';
@@ -2168,7 +2189,14 @@
   $('setup').addEventListener('input', function (e) {
     var t = e.target;
     if (t.id === 'suEvent') S.event = t.value;
+    else if (t.id === 'suMode') S.solo = t.value === 'solo';
     else if (t.hasAttribute('data-i')) S.teams[Number(t.getAttribute('data-i'))] = t.value;
+    S.msg = ''; S.armClose = 0;
+    suSync();
+  });
+  $('setup').addEventListener('change', function (e) {
+    if (e.target.id !== 'suMode') return;
+    S.solo = e.target.value === 'solo';
     S.msg = ''; S.armClose = 0;
     suSync();
   });

@@ -1,3 +1,5 @@
 # The answers stay off GitHub (the repo is public).
 questions.local.sql
 bank.local.sql
+*.local.sql
+pictures.local/

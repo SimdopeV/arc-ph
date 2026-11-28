@@ -72,6 +72,8 @@ If the database was created before this existed, run `migrations/editable_setup.
 
 To choose the questions for a quiz: on the host page, in the lobby, press **Questions**. Filter by module or search, press **+** on each question you want, put them in order with the arrows (or **Shuffle**), then **Save quiz**. Click a question to see its options. **Show answers** highlights the right answer, so keep it unticked while the projector is showing your screen. A tag says whether each answer has been checked. The quiz can only be changed in the lobby, before it starts.
 
+**Solo battle:** in Setup, set **Play as** to **Solo battle (no teams)**. Phones then join with just a name, the lobby lists players, there are no team counts or team scores, the leaderboard shows players only and the final podium is the top three players. Card mode (which needs teams holding up cards) is hidden. Switching between teams and solo only works while nobody has joined: reset the game first. On a database created before this existed, run `migrations/solo_battle.sql` once.
+
 ## 3. Set the host PIN
 
 In a **new** query, run this once with your own PIN (at least 6 characters, letters and numbers are best):

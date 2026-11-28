@@ -14,7 +14,9 @@
     if (typeof t === 'string') { try { t = JSON.parse(t); } catch (e) { t = null; } }
     if (Array.isArray(t) && t.length) Q.GROUPS = t.map(String);
     if (g.event_name) Q.EVENT = String(g.event_name);
+    if (g.solo != null) Q.SOLO = g.solo === true || g.solo === 'true';
   };
+  Q.SOLO = false; // solo battle: no teams
   Q.LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
   // Every right answer of a revealed question (one, or several for multi-select).
   Q.rightSet = function (g) {
@@ -75,7 +77,7 @@
   Q.fetchSetup = function () {
     if (!Q.client) return Promise.resolve(null);
     try {
-      return Q.client.from('games').select('event_name, teams')
+      return Q.client.from('games').select('event_name, teams, solo')
         .eq('join_code', cfg.GAME_CODE || 'ARCPH').limit(1)
         .then(function (res) {
           var row = res && res.data && res.data[0];

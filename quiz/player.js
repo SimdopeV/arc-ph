@@ -170,10 +170,10 @@
     if (!name) return showJoinError('Type your name first.');
     if (name.length > 20) return showJoinError('Use 20 characters or fewer.');
     if (Q.nameBlocked(name)) return showJoinError('Please pick a different name.');
-    if (!st.joinGroup) return showJoinError('Tap your team.');
+    if (!st.joinGroup && !Q.SOLO) return showJoinError('Tap your team.');
     st.joining = true; updateJoinButton(); showJoinError('');
     wakeLock();
-    Q.rpc('player_join', { p_code: Q.cfg.GAME_CODE, p_name: name, p_group: st.joinGroup }).then(function (r) {
+    Q.rpc('player_join', { p_code: Q.cfg.GAME_CODE, p_name: name, p_group: Q.SOLO ? null : st.joinGroup }).then(function (r) {
       st.joining = false;
       if (r.error) {
         updateJoinButton();
@@ -369,7 +369,7 @@
   }
 
   function render() {
-    $who.textContent = st.player ? st.player.name + ' · ' + st.player.group : '';
+    $who.textContent = st.player ? st.player.name + (st.player.group ? ' · ' + st.player.group : '') : '';
     var key = keyFor();
     if (key === screenKey) { tick(); return; }
     screenKey = key;
@@ -415,12 +415,13 @@
     var count = words[Q.GROUPS.length] || String(Q.GROUPS.length);
     return '' +
       '<h1>Join the <span class="grad-text">live quiz</span></h1>' +
-      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">' + Q.esc(Q.EVENT) + '. ' + count + ' teams, one winner.</p>') +
+      (st.note ? '<p class="lede">' + Q.esc(st.note) + '</p>' : '<p class="lede">' + Q.esc(Q.EVENT) + '. ' +
+        (Q.SOLO ? 'Solo battle: every player for themselves.' : count + ' teams, one winner.') + '</p>') +
       '<form id="joinForm" class="screen" novalidate autocomplete="off">' +
       '  <div class="field"><p class="label"><label for="name">Your name</label></p>' +
       '    <input id="name" name="name" maxlength="20" enterkeyhint="done" autocapitalize="words" spellcheck="false" required>' +
       '    <div class="count" id="count">0 / 20</div></div>' +
-      '  <div><p class="label">Your team</p><div class="groups' + (Q.GROUPS.length > 8 ? ' many' : '') + '" role="group" aria-label="Your team">' + groups + '</div></div>' +
+      (Q.SOLO ? '' : '  <div><p class="label">Your team</p><div class="groups' + (Q.GROUPS.length > 8 ? ' many' : '') + '" role="group" aria-label="Your team">' + groups + '</div></div>') +
       '  <p class="error" id="joinError" role="alert"></p>' +
       '  <button class="primary" id="joinBtn" type="submit">Join</button>' +
       '</form>';
@@ -430,7 +431,7 @@
     return '<div class="waiting">' +
       '<div class="pulse"><i></i><i></i><i></i><b>' + ICON.check + '</b></div>' +
       '<h1>You\'re in, <span class="name">' + Q.esc(st.player.name) + '</span>.</h1>' +
-      '<p class="lede">Team ' + Q.esc(st.player.group) + '. Eyes on the big screen.</p>' +
+      '<p class="lede">' + (st.player.group ? 'Team ' + Q.esc(st.player.group) : 'Solo battle') + '. Eyes on the big screen.</p>' +
       '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
       '</div>' +
       '<p class="lede center">The first question lands here. Keep this page open.</p>';
@@ -639,17 +640,19 @@
     var f = st.final;
     if (!f) return '<h1>That\'s a wrap</h1><p class="lede">Loading your results...</p>';
     var top = f.rank <= 3;
-    var line = f.group_rank === 1 ? 'Your team won. Take a bow.'
+    var solo = f.group_rank == null;
+    var line = solo && f.rank === 1 ? 'You won the whole thing. Take a bow.'
+      : !solo && f.group_rank === 1 ? 'Your team won. Take a bow.'
       : top ? 'Top three. Certified builder.' : 'Thanks for playing. Now go build something on Arc Studio.';
     return '' +
       '<h1>That\'s a <span class="grad-text">wrap</span></h1>' +
       '<div class="card final-card' + (top ? ' top' : '') + '"><p class="label">Your rank</p>' +
       '<p class="final-rank">' + Q.ordinal(f.rank) + '<small>of ' + f.players + '</small></p>' +
       '<p class="final-num"><span id="fnum">' + Q.num(st.total) + '</span><small>points</small></p></div>' +
-      '<div class="card">' +
+      (solo ? '' : '<div class="card">' +
       '<div class="final-row" style="border-top:0"><span>Team ' + Q.esc(st.player.group) + '</span><b>' + Q.ordinal(f.group_rank) + ' of ' + f.groups + '</b></div>' +
       '<div class="final-row"><span>Team score</span><b>' + Q.num(f.group_score) + '</b></div>' +
-      '</div>' +
+      '</div>') +
       '<p class="lede center">' + line + '</p>';
   }
 

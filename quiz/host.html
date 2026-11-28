@@ -117,12 +117,18 @@
       <label class="su-label" for="suEvent">Event name</label>
       <input id="suEvent" maxlength="40" autocomplete="off" placeholder="Community Meetup">
       <p class="su-hint">Shown at the top of the big screen and on the phone join page.</p>
-      <div class="su-row">
+      <label class="su-label" for="suMode">Play as</label>
+      <select id="suMode">
+        <option value="teams">Teams</option>
+        <option value="solo">Solo battle (no teams)</option>
+      </select>
+      <p class="su-hint" id="suModeHint"></p>
+      <div class="su-row" id="suTeamsHead">
         <span class="su-label">Teams <b id="suCount"></b></span>
         <button type="button" class="pk-btn" data-su="add" id="suAdd">Add a team</button>
       </div>
       <div class="su-teams" id="suTeams"></div>
-      <p class="su-hint">2 to 20 teams. Players tap one of these on their phone. A team that already has players is locked.</p>
+      <p class="su-hint" id="suTeamsHint">2 to 20 teams. Players tap one of these on their phone. A team that already has players is locked.</p>
       <p class="pk-msg" id="suMsg" role="status"></p>
       <button type="button" class="primary" data-su="save" id="suSave">Save</button>
     </div>
